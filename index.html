@@ -823,17 +823,14 @@
 <div id="root"></div>
 
 <script type="text/babel" data-presets="env,react">
-const { useState, useEffect, useMemo, useRef, useCallback } = React;
+const { useState, useEffect, useMemo, useRef } = React;
 
 // ============================================================
 // CONFIG
 // ============================================================
-const APP_VERSION = "1.0.0";
-// Login gestito da Firebase Authentication (email + password). Nessuna password nel file.
+const APP_VERSION = "2.0.0";
 const ANNO_DEFAULT = "2026";
 
-// ⚠ Incolla qui la config del TUO progetto Firebase personale
-// (un progetto SEPARATO da quello del club).
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyDFao6wt7W_NlLdryjer5OEmZJBaOZO7jQ",
   authDomain: "contpersonal-af58c.firebaseapp.com",
@@ -844,723 +841,751 @@ const FIREBASE_CONFIG = {
   appId: "1:799768688190:web:1b549d4c034e04a460036f"
 };
 
-let db = null;
-let auth = null;
-let firebaseReady = false;
+let db = null, auth = null, firebaseReady = false;
 try {
   if (FIREBASE_CONFIG.apiKey !== "TODO") {
     firebase.initializeApp(FIREBASE_CONFIG);
-    db = firebase.database();
-    auth = firebase.auth();
-    firebaseReady = true;
+    db = firebase.database(); auth = firebase.auth(); firebaseReady = true;
   }
 } catch (e) { console.warn("Firebase non inizializzato:", e); }
 
-// ============================================================
-// COSTANTI DI DOMINIO
-// ============================================================
-const MESI = ["gennaio","febbraio","marzo","aprile","maggio","giugno",
-              "luglio","agosto","settembre","ottobre","novembre","dicembre"];
-const mIdx = (m) => MESI.indexOf(String(m || "").toLowerCase().trim());
-const CONTI_DEFAULT = ["BPER C/C", "PREPAGATA", "CASSA"];
+// Dati iniziali estratti dall'Excel (caricati nel database al primo avvio / aggiornamento dataset)
+const SEED_VERSION = "2026.2";
+const SEED = /*__SEED__*/ {"movimenti": [{"tipo": "ENTRATA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "BONIFICO GENITORI", "metodo": "BANCA BPER", "categoria": "GENITORI", "importo": 600.0}, {"tipo": "ENTRATA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "RIMBORSI PWC", "metodo": "BANCA BPER", "categoria": "LAVORO", "importo": 58.0}, {"tipo": "ENTRATA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "STIPENDIO PWC", "metodo": "BANCA BPER", "categoria": "LAVORO", "importo": 783.0}, {"tipo": "ENTRATA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "RIMBORSO FUTSAL", "metodo": "TRAMITE SUMUP", "categoria": "FUTSAL", "importo": 60.0}, {"tipo": "ENTRATA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "BONIFICO GENITORI", "metodo": "BANCA BPER", "categoria": "GENITORI", "importo": 600.0}, {"tipo": "ENTRATA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "RIMBORSI CANVA", "metodo": "TRAMITE SUMUP", "categoria": "FUTSAL", "importo": 24.0}, {"tipo": "ENTRATA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "RIMBORSI PWC", "metodo": "BANCA BPER", "categoria": "LAVORO", "importo": 103.0}, {"tipo": "ENTRATA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "RIMBORSO GIAPPONE", "metodo": "BANCA BPER", "categoria": "RIMBORSI DA TERZI", "importo": 1245.0}, {"tipo": "ENTRATA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "STIPENDIO PWC", "metodo": "BANCA BPER", "categoria": "LAVORO", "importo": 766.0}, {"tipo": "ENTRATA", "mese": "marzo", "conto": "BPER C/C", "motivo": "BONIFICO GENITORI", "metodo": "BANCA BPER", "categoria": "GENITORI", "importo": 600.0}, {"tipo": "ENTRATA", "mese": "marzo", "conto": "BPER C/C", "motivo": "RIMBORSO PWC", "metodo": "BANCA BPER", "categoria": "LAVORO", "importo": 204.9}, {"tipo": "ENTRATA", "mese": "marzo", "conto": "BPER C/C", "motivo": "STIPENDIO PWC", "metodo": "BANCA BPER", "categoria": "LAVORO", "importo": 782.0}, {"tipo": "ENTRATA", "mese": "aprile", "conto": "BPER C/C", "motivo": "BONIFICO GENITORI", "metodo": "BANCA BPER", "categoria": "GENITORI", "importo": 600.0}, {"tipo": "ENTRATA", "mese": "aprile", "conto": "BPER C/C", "motivo": "RIMBORSO CANVA", "metodo": "BANCA BPER", "categoria": "FUTSAL", "importo": 24.0}, {"tipo": "ENTRATA", "mese": "aprile", "conto": "BPER C/C", "motivo": "ACCREDITO SATISPAY", "metodo": "BANCA BPER", "categoria": "RIMBORSI DA TERZI", "importo": 50.0}, {"tipo": "ENTRATA", "mese": "aprile", "conto": "BPER C/C", "motivo": "RIMBORSO AMAZON IDEA VERDE", "metodo": "BANCA BPER", "categoria": "RIMBORSI DA TERZI", "importo": 66.0}, {"tipo": "ENTRATA", "mese": "aprile", "conto": "BPER C/C", "motivo": "STIPENDIO PWC", "metodo": "BANCA BPER", "categoria": "LAVORO", "importo": 776.0}, {"tipo": "ENTRATA", "mese": "aprile", "conto": "BPER C/C", "motivo": "RIMBORSO PWC", "metodo": "BANCA BPER", "categoria": "LAVORO", "importo": 125.8}, {"tipo": "ENTRATA", "mese": "aprile", "conto": "BPER C/C", "motivo": "ACCREDITO SATISPAY", "metodo": "BANCA BPER", "categoria": "RIMBORSI DA TERZI", "importo": 191.0}, {"tipo": "ENTRATA", "mese": "aprile", "conto": "BPER C/C", "motivo": "RIMBORSO FONDO ETICA", "metodo": "BANCA BPER", "categoria": "RIMBORSI DA TERZI", "importo": 3638.25}, {"tipo": "ENTRATA", "mese": "aprile", "conto": "BPER C/C", "motivo": "RIMBORSO FONDO ETICA", "metodo": "BANCA BPER", "categoria": "RIMBORSI DA TERZI", "importo": 1868.27}, {"tipo": "ENTRATA", "mese": "maggio", "conto": "BPER C/C", "motivo": "BONIFICO GENITORI", "metodo": "BANCA BPER", "categoria": "GENITORI", "importo": 1000.0}, {"tipo": "ENTRATA", "mese": "maggio", "conto": "BPER C/C", "motivo": "RIMBORSO PWC", "metodo": "BANCA BPER", "categoria": "LAVORO", "importo": 95.0}, {"tipo": "ENTRATA", "mese": "maggio", "conto": "BPER C/C", "motivo": "STIPENDIO PWC", "metodo": "BANCA BPER", "categoria": "LAVORO", "importo": 893.0}, {"tipo": "ENTRATA", "mese": "maggio", "conto": "BPER C/C", "motivo": "RIMBORSO CANVA/TORNEO", "metodo": "BANCA BPER", "categoria": "FUTSAL", "importo": 64.0}, {"tipo": "ENTRATA", "mese": "gennaio", "conto": "PREPAGATA", "motivo": "RICARICA CARTA", "metodo": "BANCA BPER", "categoria": "RICARICA CARTA", "importo": 40.0}, {"tipo": "ENTRATA", "mese": "gennaio", "conto": "PREPAGATA", "motivo": "RICARICA CARTA", "metodo": "BANCA BPER", "categoria": "RICARICA CARTA", "importo": 20.0}, {"tipo": "ENTRATA", "mese": "febbraio", "conto": "PREPAGATA", "motivo": "RICARICA CARTA", "metodo": "BANCA BPER", "categoria": "RICARICA CARTA", "importo": 30.0}, {"tipo": "ENTRATA", "mese": "febbraio", "conto": "PREPAGATA", "motivo": "RICARICA CARTA", "metodo": "BANCA BPER", "categoria": "RICARICA CARTA", "importo": 30.0}, {"tipo": "ENTRATA", "mese": "marzo", "conto": "PREPAGATA", "motivo": "RICARICA CARTA", "metodo": "BANCA BPER", "categoria": "RICARICA CARTA", "importo": 30.0}, {"tipo": "ENTRATA", "mese": "aprile", "conto": "PREPAGATA", "motivo": "RICARICA CARTA", "metodo": "BANCA BPER", "categoria": "RICARICA CARTA", "importo": 30.0}, {"tipo": "ENTRATA", "mese": "aprile", "conto": "PREPAGATA", "motivo": "RICARICA CARTA", "metodo": "BANCA BPER", "categoria": "RICARICA CARTA", "importo": 30.0}, {"tipo": "ENTRATA", "mese": "aprile", "conto": "PREPAGATA", "motivo": "RICARICA CARTA", "metodo": "BANCA BPER", "categoria": "RICARICA CARTA", "importo": 200.0}, {"tipo": "ENTRATA", "mese": "maggio", "conto": "PREPAGATA", "motivo": "RICARICA CARTA", "metodo": "BANCA BPER", "categoria": "RICARICA CARTA", "importo": 1300.0}, {"tipo": "ENTRATA", "mese": "gennaio", "conto": "CASSA", "motivo": "RETTIFICA USCITE", "metodo": "RU", "categoria": "RETTIFICA USCITE", "importo": 82.7}, {"tipo": "ENTRATA", "mese": "febbraio", "conto": "CASSA", "motivo": "RETTIFICA USCITE", "metodo": "RU", "categoria": "RETTIFICA USCITE", "importo": 133.4}, {"tipo": "ENTRATA", "mese": "marzo", "conto": "CASSA", "motivo": "RETTIFICA USCITE", "metodo": "RU", "categoria": "RETTIFICA USCITE", "importo": 53.05}, {"tipo": "ENTRATA", "mese": "aprile", "conto": "CASSA", "motivo": "RETTIFICA USCITE", "metodo": "RU", "categoria": "RETTIFICA USCITE", "importo": 184.7}, {"tipo": "ENTRATA", "mese": "maggio", "conto": "CASSA", "motivo": "RETTIFICA USCITE", "metodo": "RU", "categoria": "RETTIFICA USCITE", "importo": 119.5}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "AUTOSTRADA PONTETARO", "metodo": "PAGO BANCOMAT", "categoria": "AUTOSTRADA", "importo": 11.4}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "DISTRIBUTORE FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 150.1}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "AUTOGRILL NOGAROLE ROCCA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 4.49}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "FONDI COMUNI", "metodo": "ARCA", "categoria": "FONDI INVESTIMENTO", "importo": 200.0}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "BAR SAN MARCO PONTETARO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 3.4}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "ADDEBITI PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 93.0}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "AUTOSTRADA ROVERETO SUD", "metodo": "PAGO BANCOMAT", "categoria": "AUTOSTRADA", "importo": 16.5}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "TAMOIL NOGAROLE ROCCA", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 20.09}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "RICARICA PREPAGATA", "metodo": "BANCA BPER", "categoria": "RICARICA PREPAGATA", "importo": 40.0}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "COMMISSIONI PREPAGATA", "metodo": "BANCA BPER", "categoria": "COMMISSIONI PREPAGATA", "importo": 1.0}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "COMPETENZE SPESE E ONERI", "metodo": "BANCA BPER", "categoria": "SPESE C/C", "importo": 9.84}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "DISTRIBUTORE BIBBIANO", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 40.0}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "PARCHEGGIO TOSCHI", "metodo": "PAGO BANCOMAT", "categoria": "PARCHEGGI", "importo": 16.0}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "AUTOSTRADA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "AUTOSTRADA", "importo": 4.4}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "POLDO PANINI PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 13.92}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "AUTOLAVAGGIO ROLO", "metodo": "PAGO BANCOMAT", "categoria": "MACCHINA", "importo": 10.0}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "IMPOSTA DI BOLLO", "metodo": "BANCA BPER", "categoria": "SPESE C/C", "importo": 8.4}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "ORDINI AMAZON", "metodo": "TRAMITE SITO", "categoria": "ORDINI ONLINE", "importo": 29.41}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "GIACOMAZZI PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 24.0}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "BAR PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 3.1}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "ENI PARMA", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 50.02}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "QB REGGIOLO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 35.5}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "RICARICA PREPAGATA", "metodo": "BANCA BPER", "categoria": "RICARICA PREPAGATA", "importo": 20.0}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "VISITA MEDICA MIOS FISIOPERFORMANCE", "metodo": "PAGO BANCOMAT", "categoria": "SPESE MEDICHE", "importo": 70.0}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "KOMODO CAFÈ CORREGGIO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 8.0}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "BAR RICCHI FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 5.0}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "RISTORANTE DA SALVATORE FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 23.5}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "COOP CORREGGIO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 7.33}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "ENI COLLECCHIO", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 30.04}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "BAR BIJOU PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 3.2}, {"tipo": "USCITA", "mese": "gennaio", "conto": "BPER C/C", "motivo": "GRUPPO NEGOZI PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 8.5}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "FORNO CASTAGNOLI PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 20.9}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "ANIMA DI PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 12.0}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "CONCHIGLIA NOVELLARA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 22.5}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "BAR RICCHI", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 6.0}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "IL PORTICO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 3.3}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "GELATERIA K2 FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 3.0}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "GIACOMAZZI/CASTAGNOLI", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 37.4}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "THREE SISTER PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 7.7}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "COOP FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 15.35}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "ADDEBITI PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 288.5}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "DISTRIBUTORE FABBRICO + EGO", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 180.1}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "POLDO PANINI DEI SERVI PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 44.0}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "FONDI COMUNI", "metodo": "ARCA", "categoria": "FONDI INVESTIMENTO", "importo": 200.0}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "BUTEGA ROMAGNOLA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 8.0}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "LA GOLOSA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 3.0}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "LA MELA REGGIO EMILIA", "metodo": "PAGO BANCOMAT", "categoria": "VESTITI", "importo": 670.0}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "LADY BAR NOVELLARA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 3.1}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "RICARICA PREPAGATA", "metodo": "BANCA BPER", "categoria": "RICARICA PREPAGATA", "importo": 60.0}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "COMMISSIONI PREPAGATA", "metodo": "BANCA BPER", "categoria": "COMMISSIONI PREPAGATA", "importo": 1.0}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "PARCHEGGIO MILANO", "metodo": "PAGO BANCOMAT", "categoria": "PARCHEGGI", "importo": 7.0}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "SCOUT REGGIO EMILIA", "metodo": "PAGO BANCOMAT", "categoria": "VESTITI", "importo": 89.5}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "ANTICO CUOIO REGGIO EMILIA", "metodo": "PAGO BANCOMAT", "categoria": "SPESE DIVERSE", "importo": 7.5}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "GELATERIA K2 FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 11.0}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "RISTORANTELE ALI DEL FRASSINO PESCHIERA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 66.77}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "MENSA FORNOVO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 47.1}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "ADDEBITO UNIPOLMOVE", "metodo": "BANCA BPER", "categoria": "AUTOSTRADA E PARCHEGGI", "importo": 100.2}, {"tipo": "USCITA", "mese": "febbraio", "conto": "BPER C/C", "motivo": "MCDONALD'S CARPI", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 11.93}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 8.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "AUTOSELF ROLO", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 10.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "COSSU SUSANNE ROLO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 8.5}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "ANIMA DI PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 4.8}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "LA GOLOSA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 3.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "EGO FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 50.04}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "BIRRA E SCHIACCIA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 8.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "EGO FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 30.27}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "BIRRA E SCHIACCIA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 7.5}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "ANIMA DI PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 3.5}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "CASTAGNOLI PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 8.99}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "PASTICCERIA GIACOMAZZI", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 16.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "PIZZERIA AL VARCO FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 11.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "ANIMA DI PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 10.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "TAMOIL NOVELLARA", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 30.23}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "FREE SPORT FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "VESTITI", "importo": 62.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "OSTEMAGNO PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 10.5}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "POLDO PANINI PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 12.5}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 16.85}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "CASTAGNOLI PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 15.18}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "ENI PARMA", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 50.15}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "GIUSTO SPIRITO CARPI", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 1.3}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "LA GOLOSA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 3.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "PEPEN PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 10.5}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "COMMISSIONI PREPAGATA", "metodo": "BANCA BPER", "categoria": "COMMISSIONI PREPAGATA", "importo": 0.5}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "RICARICA PREPAGATA", "metodo": "BANCA BPER", "categoria": "RICARICA PREPAGATA", "importo": 30.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 10.99}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "ADDEBITO UNIPOLMOVE", "metodo": "BANCA BPER", "categoria": "AUTOSTRADA E PARCHEGGI", "importo": 255.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "MENSA SORBOLO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 4.1}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "BAR LOCANDA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 18.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "ADDEBITO AMAZON EU", "metodo": "TRAMITE SITO", "categoria": "ORDINI ONLINE", "importo": 30.99}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 20.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "MENSA SORBOLO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 14.3}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "EGO BAGNOLO", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 50.06}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "SCOUT REGGIO EMILIA", "metodo": "PAGO BANCOMAT", "categoria": "VESTITI", "importo": 322.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "FONDI COMUNI ARCA AZ AMER", "metodo": "ARCA", "categoria": "FONDI INVESTIMENTO", "importo": 100.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 5.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 12.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "DISTRIBUTORE FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 50.03}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "FONDI COMUNI ARCA TE", "metodo": "ARCA", "categoria": "FONDI INVESTIMENTO", "importo": 100.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "PASTICCERIA GIACOMAZZI", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 14.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 20.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "L&S FOOD FORNOVO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 11.8}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 45.6}, {"tipo": "USCITA", "mese": "marzo", "conto": "BPER C/C", "motivo": "DISTRIBUTORE FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 50.01}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "CONAD REGGIOLO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 10.38}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "DISTRIBUTORE SAVIOLI REGGIOLO", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 50.26}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "L'ORA DEL CAFFE PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 7.5}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "LA GOLOSA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 3.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "ESSELUNGA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 2.03}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 5.5}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "MCDONALD'S CARPI", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 9.48}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "L'ORA DEL CAFFE PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 5.7}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "FARMACIA FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "SPESE MEDICHE", "importo": 8.2}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "L'ORA DEL CAFFE PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 2.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "FREE SPORT FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "VESTITI", "importo": 52.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "PARCHEGGIO SAN MARINO", "metodo": "PAGO BANCOMAT", "categoria": "PARCHEGGI", "importo": 1.5}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "PELLICANO BEACH RIMINI", "metodo": "PAGO BANCOMAT", "categoria": "SPESE DIVERSE", "importo": 3.5}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "RISTORANTE ROMAGNA MIA RIMINI", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 60.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "BAR RICCHI FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 3.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "ENI PARMA", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 50.36}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "COMMISSIONI PREPAGATA", "metodo": "BANCA BPER", "categoria": "COMMISSIONI PREPAGATA", "importo": 0.5}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "RICARICA PREPAGATA", "metodo": "BANCA BPER", "categoria": "RICARICA PREPAGATA", "importo": 30.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "L'ORA DEL CAFFE PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 3.7}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "L'ORA DEL CAFFE PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 2.5}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "COMMISSIONI PREPAGATA", "metodo": "BANCA BPER", "categoria": "COMMISSIONI PREPAGATA", "importo": 0.5}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "RICARICA PREPAGATA", "metodo": "BANCA BPER", "categoria": "RICARICA PREPAGATA", "importo": 30.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "ADDEBITO UNIPOLMOVE", "metodo": "BANCA BPER", "categoria": "AUTOSTRADA E PARCHEGGI", "importo": 213.4}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 20.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "MCDONALD'S CARPI", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 3.08}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "F.R.G. PONTE DI PIAVE", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 7.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "EGO FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 50.15}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "F.R.G. PONTE DI PIAVE", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 8.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "ADDEBITO AMAZON EU", "metodo": "TRAMITE SITO", "categoria": "ORDINI ONLINE", "importo": 10.83}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "ADDEBITO AMAZON MKTP", "metodo": "TRAMITE SITO", "categoria": "ORDINI ONLINE", "importo": 16.99}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 26.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 8.5}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "POLDO PANINI PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 11.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "DISTRIBUTORE FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 50.24}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "ADDEBITO AMAZON MKTP", "metodo": "TRAMITE SITO", "categoria": "ORDINI ONLINE", "importo": 38.97}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "FONDI COMUNI ARCA TE", "metodo": "ARCA", "categoria": "FONDI INVESTIMENTO", "importo": 100.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "FONDI COMUNI ARCA AZ AMER", "metodo": "ARCA", "categoria": "FONDI INVESTIMENTO", "importo": 100.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "CONAD REGGIOLO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 25.59}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "PIZZERIA FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 17.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "PIZZERIA 2 ST REGGIOLO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 25.35}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "BAR RICCHI FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 21.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "STAZIONE AGIP PARMA", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 50.11}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "L'ORA DEL CAFFE PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 7.6}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "RISTORANTE PIZZERIA D. FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 22.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "COMMISSIONE BONIFICO SATISPAY", "metodo": "BANCA BPER", "categoria": "SPESE C/C", "importo": 0.92}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "BONIFICO ISTANTANEO SATISPAY", "metodo": "BANCA BPER", "categoria": "GIROCONTI", "importo": 191.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "BAR RICCHI FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 3.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "L'ORA DEL CAFFE PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 4.9}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 65.6}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "TITOLI", "metodo": "BANCA BPER", "categoria": "FONDI INVESTIMENTO", "importo": 5500.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 547.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "COMPETENZE SPESE E ONERI", "metodo": "BANCA BPER", "categoria": "SPESE C/C", "importo": 9.84}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "IMPOSTA DI BOLLO", "metodo": "BANCA BPER", "categoria": "SPESE C/C", "importo": 8.3}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "PASTICCERIA GIACOMAZZI", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 14.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "SUMUP CASA OLIVARI FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 26.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "IEVA VINCENZO NOCETO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 50.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 79.95}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "L'ORA DEL CAFFE PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 4.2}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 6.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "L'ORA DEL CAFFE PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE L.", "importo": 8.2}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "COMMISSIONI PREPAGATA", "metodo": "BANCA BPER", "categoria": "COMMISSIONI PREPAGATA", "importo": 0.5}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "RICARICA PREPAGATA", "metodo": "BANCA BPER", "categoria": "RICARICA PREPAGATA", "importo": 200.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "BPER C/C", "motivo": "SOPRAVVENIENZA PASSIVA", "metodo": "BANCA BPER", "categoria": "SOPRAVVENIENZE", "importo": 24.24}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "DISTRIBUTORE FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 50.36}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "DA CICCIO DI MOTTOLA CAMPAGNOLA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 6.5}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "MAMMA MIA SAS NOVELLARA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 20.75}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "BIRRA E SCHIACCIA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 8.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "ESSELUNGA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 0.46}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "ESSELUNGA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 2.09}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "NONNA OLMA REGGIOLO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 3.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "DISTRIBUTORE FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 50.01}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "ESSELUNGA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 0.55}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "ESSELUNGA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 1.9}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "PASTICCERIA GIACOMAZZI PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 2.9}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "FARMACIA FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "FARMACIA", "importo": 13.5}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "OSTERIA DEL PANE CARPI", "metodo": "PAGO BANCOMAT", "categoria": "RISTORANTE", "importo": 88.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "FONDI COMUNI ARCA AZ AMER CLIMA", "metodo": "BANCA BPER", "categoria": "FONDI INVESTIMENTO", "importo": 100.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "FONDI COMUNI ARCA TE", "metodo": "BANCA BPER", "categoria": "FONDI INVESTIMENTO", "importo": 100.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 6.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 10.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 16.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 12.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "COMMISSIONI PREPAGATA", "metodo": "BANCA BPER", "categoria": "COMMISSIONI PREPAGATA", "importo": 0.5}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "RICARICA PREPAGATA", "metodo": "BANCA BPER", "categoria": "RICARICA PREPAGATA", "importo": 1300.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "PAYPAL SDD", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 52.71}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "RISTORANTE PIZZERIA D. FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 6.5}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "ESSELUNGA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 1.21}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "PAYPAL SDD", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 42.5}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "ESSELUNGA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 1.35}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "BIRRA E SCHIACCIA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 9.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "ESSELUNGA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 1.66}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "THREE SISTER PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 3.5}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "SUMUP CASA OLIVARI FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 45.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "MELONI AUTO CENTRO REVISIONE NOVELLARA", "metodo": "PAGO BANCOMAT", "categoria": "SPESE AUTO", "importo": 80.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "PRETI DINO FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "SPESE DIVERSE", "importo": 95.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "AMAZON SDD", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 5.99}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "ESSELUNGA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 3.81}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "BIRRA E SCHIACCIA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 8.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "RISTORANTE S. STEFANO CAMPAGNOLA", "metodo": "PAGO BANCOMAT", "categoria": "RISTORANTE", "importo": 24.5}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "COMMISSIONE BONIFICO POLIZIA", "metodo": "BANCA BPER", "categoria": "SPESE C/C", "importo": 0.92}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "BONIFICO POLIZIA STRADALE", "metodo": "BANCA BPER", "categoria": "SPESE DIVERSE", "importo": 121.1}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "ESSELUNGA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 2.21}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "UNIPOLMOVE PEDAGGI", "metodo": "BANCA BPER", "categoria": "AUTOSTRADA", "importo": 238.4}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "COOP FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 15.23}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "DISTRIBUTORE FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 50.08}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 4.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "BIRRA E SCHIACCIA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 9.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "ESSELUNGA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 1.12}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "ADDEBITO PAYPAL", "metodo": "TRAMITE PAYPAL", "categoria": "ADDEBITI PAYPAL", "importo": 5.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "EGO FABBRICO", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 30.09}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "ESSELUNGA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 0.4}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "PASTICCERIA GIACOMAZZI PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 31.5}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "FRITTELLE PARMA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 18.5}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "AGIP EUROPA PARMA", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 50.32}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "AUTOSELF ROLO", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 10.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "AUTOSELF ROLO", "metodo": "PAGO BANCOMAT", "categoria": "BENZINA", "importo": 10.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "BPER C/C", "motivo": "RISTORANTE DA MARIO LUZZARA", "metodo": "PAGO BANCOMAT", "categoria": "ALIMENTARE", "importo": 45.0}, {"tipo": "USCITA", "mese": "gennaio", "conto": "PREPAGATA", "motivo": "RICARICA COOPVOCE", "metodo": "TRAMITE PAYPAL", "categoria": "RICARICHE TELEFONO", "importo": 20.0}, {"tipo": "USCITA", "mese": "gennaio", "conto": "PREPAGATA", "motivo": "AMAZON PRIME", "metodo": "TRAMITE APP", "categoria": "FISSE PREPAGATA", "importo": 4.99}, {"tipo": "USCITA", "mese": "gennaio", "conto": "PREPAGATA", "motivo": "ADDEBITO CANONE MENSILE", "metodo": "BANCA BPER", "categoria": "FISSE PREPAGATA", "importo": 0.5}, {"tipo": "USCITA", "mese": "gennaio", "conto": "PREPAGATA", "motivo": "NETFLIX", "metodo": "TRAMITE APP", "categoria": "FISSE PREPAGATA", "importo": 7.0}, {"tipo": "USCITA", "mese": "gennaio", "conto": "PREPAGATA", "motivo": "SPOTIFY STUDENT", "metodo": "TRAMITE APP", "categoria": "FISSE PREPAGATA", "importo": 6.49}, {"tipo": "USCITA", "mese": "gennaio", "conto": "PREPAGATA", "motivo": "AUTOSTRADA PARMA", "metodo": "IN LOCO", "categoria": "AUTOSTRADA", "importo": 2.2}, {"tipo": "USCITA", "mese": "gennaio", "conto": "PREPAGATA", "motivo": "BAR COLLECCHIO", "metodo": "IN LOCO", "categoria": "ALIMENTARE", "importo": 3.2}, {"tipo": "USCITA", "mese": "febbraio", "conto": "PREPAGATA", "motivo": "NETFLIX", "metodo": "TRAMITE APP", "categoria": "FISSE PREPAGATA", "importo": 7.0}, {"tipo": "USCITA", "mese": "febbraio", "conto": "PREPAGATA", "motivo": "AUTOSTRADA PARMA", "metodo": "IN LOCO", "categoria": "AUTOSTRADA", "importo": 2.2}, {"tipo": "USCITA", "mese": "febbraio", "conto": "PREPAGATA", "motivo": "GELATO CIACCO", "metodo": "IN LOCO", "categoria": "ALIMENTARE", "importo": 3.5}, {"tipo": "USCITA", "mese": "febbraio", "conto": "PREPAGATA", "motivo": "ADDEBITO CANONE MENSILE", "metodo": "BANCA BPER", "categoria": "FISSE PREPAGATA", "importo": 0.5}, {"tipo": "USCITA", "mese": "febbraio", "conto": "PREPAGATA", "motivo": "PARCHEGGIO CASERMA ZUCCHI", "metodo": "IN LOCO", "categoria": "SPESE DIVERSE", "importo": 6.0}, {"tipo": "USCITA", "mese": "febbraio", "conto": "PREPAGATA", "motivo": "AMAZON PRIME", "metodo": "TRAMITE APP", "categoria": "FISSE PREPAGATA", "importo": 4.99}, {"tipo": "USCITA", "mese": "febbraio", "conto": "PREPAGATA", "motivo": "METROPOLITANA MILANO", "metodo": "IN LOCO", "categoria": "SPESE DIVERSE", "importo": 4.4}, {"tipo": "USCITA", "mese": "febbraio", "conto": "PREPAGATA", "motivo": "SPOTIFY STUDENT", "metodo": "TRAMITE APP", "categoria": "FISSE PREPAGATA", "importo": 6.49}, {"tipo": "USCITA", "mese": "febbraio", "conto": "PREPAGATA", "motivo": "SERVIZIO SPID POSTE ITALIANE", "metodo": "TRAMITE SITO", "categoria": "SPESE DIVERSE", "importo": 6.0}, {"tipo": "USCITA", "mese": "febbraio", "conto": "PREPAGATA", "motivo": "APP BUONRISTORO", "metodo": "TRAMITE APP", "categoria": "SPESE DIVERSE", "importo": 10.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "PREPAGATA", "motivo": "AMAZON PRIME", "metodo": "TRAMITE APP", "categoria": "FISSE PREPAGATA", "importo": 4.99}, {"tipo": "USCITA", "mese": "marzo", "conto": "PREPAGATA", "motivo": "MC DONALD'S MANTOVA", "metodo": "IN LOCO", "categoria": "ALIMENTARE", "importo": 11.48}, {"tipo": "USCITA", "mese": "marzo", "conto": "PREPAGATA", "motivo": "ADDEBITO CANONE MENSILE", "metodo": "BANCA BPER", "categoria": "FISSE PREPAGATA", "importo": 0.5}, {"tipo": "USCITA", "mese": "marzo", "conto": "PREPAGATA", "motivo": "TEST QI", "metodo": "TRAMITE SITO", "categoria": "SPESE DIVERSE", "importo": 5.0}, {"tipo": "USCITA", "mese": "marzo", "conto": "PREPAGATA", "motivo": "NETFLIX", "metodo": "TRAMITE APP", "categoria": "FISSE PREPAGATA", "importo": 6.99}, {"tipo": "USCITA", "mese": "marzo", "conto": "PREPAGATA", "motivo": "SPOTIFY STUDENT", "metodo": "TRAMITE APP", "categoria": "FISSE PREPAGATA", "importo": 6.49}, {"tipo": "USCITA", "mese": "aprile", "conto": "PREPAGATA", "motivo": "ANIMA DI PARMA", "metodo": "IN LOCO", "categoria": "ALIMENTARE", "importo": 2.9}, {"tipo": "USCITA", "mese": "aprile", "conto": "PREPAGATA", "motivo": "ANIMA DI PARMA", "metodo": "IN LOCO", "categoria": "ALIMENTARE", "importo": 1.5}, {"tipo": "USCITA", "mese": "aprile", "conto": "PREPAGATA", "motivo": "CLAUDE.AI SUBSCRIPTION", "metodo": "TRAMITE APP", "categoria": "FISSE PREPAGATA", "importo": 21.96}, {"tipo": "USCITA", "mese": "aprile", "conto": "PREPAGATA", "motivo": "DALLA LELLA RIMINI", "metodo": "IN LOCO", "categoria": "ALIMENTARE", "importo": 7.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "PREPAGATA", "motivo": "NETFLIX", "metodo": "TRAMITE APP", "categoria": "FISSE PREPAGATA", "importo": 6.99}, {"tipo": "USCITA", "mese": "aprile", "conto": "PREPAGATA", "motivo": "SPOTIFY STUDENT", "metodo": "TRAMITE APP", "categoria": "FISSE PREPAGATA", "importo": 6.49}, {"tipo": "USCITA", "mese": "aprile", "conto": "PREPAGATA", "motivo": "L'ORA DEL CAFFE", "metodo": "IN LOCO", "categoria": "ALIMENTARE", "importo": 10.2}, {"tipo": "USCITA", "mese": "aprile", "conto": "PREPAGATA", "motivo": "SUMUP DAVIDE LODI FABBRICO", "metodo": "IN LOCO", "categoria": "ALIMENTARE", "importo": 6.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "PREPAGATA", "motivo": "GELATERIA K2 FABBRICO", "metodo": "IN LOCO", "categoria": "ALIMENTARE", "importo": 3.0}, {"tipo": "USCITA", "mese": "aprile", "conto": "PREPAGATA", "motivo": "ADDEBITO CANONE MENSILE", "metodo": "BANCA BPER", "categoria": "FISSE PREPAGATA", "importo": 0.5}, {"tipo": "USCITA", "mese": "aprile", "conto": "PREPAGATA", "motivo": "AMAZON PRIME", "metodo": "TRAMITE APP", "categoria": "FISSE PREPAGATA", "importo": 4.99}, {"tipo": "USCITA", "mese": "aprile", "conto": "PREPAGATA", "motivo": "HEYMONDO MILANO", "metodo": "TRAMITE APP", "categoria": "SPESE DIVERSE", "importo": 75.62}, {"tipo": "USCITA", "mese": "aprile", "conto": "PREPAGATA", "motivo": "POLISPORTIVA PROGETTO FABBRICO", "metodo": "IN LOCO", "categoria": "SPESE DIVERSE", "importo": 8.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "PREPAGATA", "motivo": "BLUE Car Rental", "metodo": "TRAMITE APP", "categoria": "SPESE DIVERSE", "importo": 1320.28}, {"tipo": "USCITA", "mese": "maggio", "conto": "PREPAGATA", "motivo": "COMMISSIONI BLUE Car Rental", "metodo": "BANCA BPER", "categoria": "SPESE DIVERSE", "importo": 13.18}, {"tipo": "USCITA", "mese": "maggio", "conto": "PREPAGATA", "motivo": "AMAZON PRIME", "metodo": "TRAMITE APP", "categoria": "FISSE PREPAGATA", "importo": 4.99}, {"tipo": "USCITA", "mese": "maggio", "conto": "PREPAGATA", "motivo": "ADDEBITO CANONE MENSILE", "metodo": "BANCA BPER", "categoria": "FISSE PREPAGATA", "importo": 0.5}, {"tipo": "USCITA", "mese": "maggio", "conto": "PREPAGATA", "motivo": "GELATERIA K2 FABBRICO", "metodo": "IN LOCO", "categoria": "ALIMENTARE", "importo": 5.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "PREPAGATA", "motivo": "NETFLIX", "metodo": "TRAMITE APP", "categoria": "FISSE PREPAGATA", "importo": 6.99}, {"tipo": "USCITA", "mese": "maggio", "conto": "PREPAGATA", "motivo": "LA GOLOSA CAVOUR PARMA", "metodo": "IN LOCO", "categoria": "ALIMENTARE", "importo": 3.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "PREPAGATA", "motivo": "GELATERIA K2 FABBRICO", "metodo": "IN LOCO", "categoria": "ALIMENTARE", "importo": 3.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "PREPAGATA", "motivo": "CLAUDE.AI SUBSCRIPTION", "metodo": "TRAMITE APP", "categoria": "FISSE PREPAGATA", "importo": 21.96}, {"tipo": "USCITA", "mese": "maggio", "conto": "PREPAGATA", "motivo": "MELO DRINKS AND FOOD", "metodo": "IN LOCO", "categoria": "ALIMENTARE", "importo": 4.0}, {"tipo": "USCITA", "mese": "maggio", "conto": "PREPAGATA", "motivo": "SPOTIFY", "metodo": "TRAMITE APP", "categoria": "FISSE PREPAGATA", "importo": 11.99}, {"tipo": "USCITA", "mese": "maggio", "conto": "PREPAGATA", "motivo": "GELATERIA K2 FABBRICO", "metodo": "IN LOCO", "categoria": "ALIMENTARE", "importo": 3.0}, {"tipo": "USCITA", "mese": "gennaio", "conto": "CASSA", "motivo": "USCITE DIVERSE", "metodo": "SD", "categoria": "SPESE DIVERSE", "importo": 21.8}, {"tipo": "USCITA", "mese": "gennaio", "conto": "CASSA", "motivo": "USCITE LAVORO", "metodo": "SL", "categoria": "SPESE LAVORO", "importo": 60.9}, {"tipo": "USCITA", "mese": "febbraio", "conto": "CASSA", "motivo": "USCITE DIVERSE", "metodo": "SD", "categoria": "SPESE DIVERSE", "importo": 35.5}, {"tipo": "USCITA", "mese": "febbraio", "conto": "CASSA", "motivo": "USCITE LAVORO", "metodo": "SL", "categoria": "SPESE LAVORO", "importo": 97.9}, {"tipo": "USCITA", "mese": "marzo", "conto": "CASSA", "motivo": "USCITE DIVERSE", "metodo": "SD", "categoria": "SPESE DIVERSE", "importo": 42.85}, {"tipo": "USCITA", "mese": "marzo", "conto": "CASSA", "motivo": "USCITE LAVORO", "metodo": "SL", "categoria": "SPESE LAVORO", "importo": 10.2}, {"tipo": "USCITA", "mese": "aprile", "conto": "CASSA", "motivo": "USCITE DIVERSE", "metodo": "SD", "categoria": "SPESE DIVERSE", "importo": 131.7}, {"tipo": "USCITA", "mese": "aprile", "conto": "CASSA", "motivo": "USCITE LAVORO", "metodo": "SL", "categoria": "SPESE LAVORO", "importo": 53.0}], "pdc": [{"codice": "1", "nome": "BPER C/C", "eccedenza": "DARE/AVERE", "prospetto": "SP", "categoria": "DISP. LIQUIDE"}, {"codice": "2", "nome": "CAPITALE SOCIALE", "eccedenza": "AVERE", "prospetto": "SP", "categoria": "PATRIMONIO NETTO"}, {"codice": "3", "nome": "CASSA", "eccedenza": "DARE/AVERE", "prospetto": "SP", "categoria": "DISP. LIQUIDE"}, {"codice": "4", "nome": "RIPETIZIONI C/ENT.", "eccedenza": "AVERE", "prospetto": "CE", "categoria": "RICAVI"}, {"codice": "5", "nome": "LAVORO C/ACQUISTI", "eccedenza": "DARE", "prospetto": "CE", "categoria": "COSTI"}, {"codice": "6", "nome": "GENITORI C/ENT.", "eccedenza": "AVERE", "prospetto": "CE", "categoria": "RICAVI"}, {"codice": "7", "nome": "APPLE PENCIL", "eccedenza": "DARE", "prospetto": "SP", "categoria": "IMM. MATERIALI"}, {"codice": "8", "nome": "SPESE DIVERSE", "eccedenza": "DARE", "prospetto": "CE", "categoria": "COSTI"}, {"codice": "9", "nome": "BPER PREPAGATA C/C", "eccedenza": "AVERE", "prospetto": "SP", "categoria": "DISP. LIQUIDE"}, {"codice": "10", "nome": "UNIVERSITÀ C/ACQUISTI", "eccedenza": "DARE", "prospetto": "CE", "categoria": "COSTI"}, {"codice": "11", "nome": "TITOLI C/C", "eccedenza": "DARE", "prospetto": "SP", "categoria": "IMM. FINANZIARIE"}, {"codice": "12", "nome": "CALCOLATRICE", "eccedenza": "DARE", "prospetto": "SP", "categoria": "IMM. MATERIALI"}, {"codice": "13", "nome": "LAPTOP", "eccedenza": "DARE", "prospetto": "SP", "categoria": "IMM. MATERIALI"}, {"codice": "14", "nome": "IPAD", "eccedenza": "DARE", "prospetto": "SP", "categoria": "IMM. MATERIALI"}, {"codice": "15", "nome": "IPHONE 12", "eccedenza": "DARE", "prospetto": "SP", "categoria": "IMM. MATERIALI"}, {"codice": "16", "nome": "HARD DISK", "eccedenza": "DARE", "prospetto": "SP", "categoria": "IMM. MATERIALI"}, {"codice": "17", "nome": "ZAINO SCUOLA", "eccedenza": "DARE", "prospetto": "SP", "categoria": "IMM. MATERIALI"}, {"codice": "18", "nome": "OROLOGIO D-W", "eccedenza": "DARE", "prospetto": "SP", "categoria": "IMM. MATERIALI"}, {"codice": "19", "nome": "AMMORTAMENTO LAPTOP OLD", "eccedenza": "DARE", "prospetto": "CE", "categoria": "COSTI"}, {"codice": "20", "nome": "AMMORTAMENTO IPAD", "eccedenza": "DARE", "prospetto": "CE", "categoria": "COSTI"}, {"codice": "21", "nome": "AMMORTAMENTO APPLE PENCIL", "eccedenza": "DARE", "prospetto": "CE", "categoria": "COSTI"}, {"codice": "22", "nome": "AMMORTAMENTO IPHONE 12", "eccedenza": "DARE", "prospetto": "CE", "categoria": "COSTI"}, {"codice": "23", "nome": "AMMORTAMENTO HARD DISK", "eccedenza": "DARE", "prospetto": "CE", "categoria": "COSTI"}, {"codice": "24", "nome": "AMMORTAMENTO ZAINO SCUOLA", "eccedenza": "DARE", "prospetto": "CE", "categoria": "COSTI"}, {"codice": "25", "nome": "AMMORTAMENTO CALCOLATRICE", "eccedenza": "DARE", "prospetto": "CE", "categoria": "COSTI"}, {"codice": "26", "nome": "AMMORTAMENTO OROLOGIO D- W", "eccedenza": "DARE", "prospetto": "CE", "categoria": "COSTI"}, {"codice": "27", "nome": "F. AMMORTAMENTO LAPTOP OLD", "eccedenza": "AVERE", "prospetto": "SP", "categoria": "RETTIFICA ATTIVO"}, {"codice": "28", "nome": "F.  AMMORTAMENTO IPAD", "eccedenza": "AVERE", "prospetto": "SP", "categoria": "RETTIFICA ATTIVO"}, {"codice": "29", "nome": "F. AMMORTAMENTO APPLE PENCIL", "eccedenza": "AVERE", "prospetto": "SP", "categoria": "RETTIFICA ATTIVO"}, {"codice": "30", "nome": "F. AMMORTAMENTO IPHONE 12", "eccedenza": "AVERE", "prospetto": "SP", "categoria": "RETTIFICA ATTIVO"}, {"codice": "31", "nome": "F. AMMORTAMENTO HARD DISK", "eccedenza": "AVERE", "prospetto": "SP", "categoria": "RETTIFICA ATTIVO"}, {"codice": "32", "nome": "F. AMMORTAMENTO ZAINO SCUOLA", "eccedenza": "AVERE", "prospetto": "SP", "categoria": "RETTIFICA ATTIVO"}, {"codice": "33", "nome": "F. AMMORTAMENTO CALCOLATRICE", "eccedenza": "AVERE", "prospetto": "SP", "categoria": "RETTIFICA ATTIVO"}, {"codice": "34", "nome": "F. AMMORTAMENTO OROLOGIO D- W", "eccedenza": "AVERE", "prospetto": "SP", "categoria": "RETTIFICA ATTIVO"}, {"codice": "35", "nome": "RETTIFICHE PER SPESE ANNUALI", "eccedenza": "AVERE", "prospetto": "CE", "categoria": "RICAVI"}, {"codice": "36", "nome": "PERDITA D'ESERCIZIO", "eccedenza": "AVERE", "prospetto": "CE/SP", "categoria": "PATRIMONIO NETTO"}, {"codice": "37", "nome": "PERDITE A NUOVO", "eccedenza": "DARE", "prospetto": "SP", "categoria": "PATRIMONIO NETTO"}, {"codice": "38", "nome": "POWER BANK", "eccedenza": "DARE", "prospetto": "SP", "categoria": "IMM. MATERIALI"}, {"codice": "39", "nome": "TERZI C/ENT.", "eccedenza": "AVERE", "prospetto": "CE", "categoria": "RICAVI"}, {"codice": "40", "nome": "AMMORTAMENTO POWER BANK", "eccedenza": "DARE", "prospetto": "CE", "categoria": "COSTI"}, {"codice": "41", "nome": "F. AMMORTAMENTO POWER BANK", "eccedenza": "AVERE", "prospetto": "SP", "categoria": "RETTIFICA ATTIVO"}, {"codice": "42", "nome": "UTILE DELL'ESERCIZIO", "eccedenza": "AVERE", "prospetto": "CE/SP", "categoria": "PATRIMONIO NETTO"}, {"codice": "43", "nome": "UTILE A NUOVO", "eccedenza": "AVERE", "prospetto": "SP", "categoria": "PATRIMONIO NETTO"}, {"codice": "44", "nome": "BILANCIO DI APERTURA", "eccedenza": "DARE/AVERE", "prospetto": "SP", "categoria": "CONTO TRANSITORIO"}, {"codice": "45", "nome": "RETTIFICHE DIVERSE", "eccedenza": "DARE/AVERE", "prospetto": "CE", "categoria": "RICAVI/COSTI"}, {"codice": "46", "nome": "SOPRAVVENIENZE ATTIVE", "eccedenza": "AVERE", "prospetto": "CE", "categoria": "RICAVI"}, {"codice": "47", "nome": "PARENTI C/ENT.", "eccedenza": "AVERE", "prospetto": "CE", "categoria": "RICAVI"}, {"codice": "48", "nome": "IPHONE 16", "eccedenza": "DARE", "prospetto": "SP", "categoria": "IMM. MATERIALI"}, {"codice": "49", "nome": "OROLOGIO SEIKO", "eccedenza": "DARE", "prospetto": "SP", "categoria": "IMM. MATERIALI"}, {"codice": "50", "nome": "STIPENDI PWC", "eccedenza": "AVERE", "prospetto": "CE", "categoria": "RICAVI"}, {"codice": "51", "nome": "AMMORTAMENTO OROLOGIO SEIKO", "eccedenza": "DARE", "prospetto": "CE", "categoria": "COSTI"}, {"codice": "52", "nome": "F. AMMORTAMENTO OROLOGIO SEIKO", "eccedenza": "AVERE", "prospetto": "SP", "categoria": "RETTIFICA ATTIVO"}, {"codice": "53", "nome": "AMMORTAMENTO LAPTOP", "eccedenza": "DARE", "prospetto": "CE", "categoria": "COSTI"}, {"codice": "54", "nome": "F. AMMORTAMENTO LAPTOP", "eccedenza": "AVERE", "prospetto": "SP", "categoria": "RETTIFICA ATTIVO"}, {"codice": "55", "nome": "SVALUTAZIONE IPHONE 12", "eccedenza": "DARE", "prospetto": "CE", "categoria": "COSTI"}, {"codice": "56", "nome": "SOPRAVVENIENZE PASSIVE", "eccedenza": "DARE", "prospetto": "CE", "categoria": "COSTI"}, {"codice": "57", "nome": "RISERVA STATUTARIA", "eccedenza": "AVERE", "prospetto": "SP", "categoria": "PATRIMONIO NETTO"}, {"codice": "58", "nome": "RIMBORSI PWC", "eccedenza": "AVERE", "prospetto": "CE", "categoria": "RICAVI"}, {"codice": "59", "nome": "SPESE C/C", "eccedenza": "DARE", "prospetto": "CE", "categoria": "COSTI"}, {"codice": "60", "nome": "COMMISSIONI PREPAGATA", "eccedenza": "DARE", "prospetto": "CE", "categoria": "COSTI"}, {"codice": "61", "nome": "RIMBORSI FUTSAL", "eccedenza": "AVERE", "prospetto": "CE", "categoria": "RICAVI"}], "scritture": [{"data": "2023-01-01", "descrizione": "Riapertura attività", "righe": [{"conto": "APPLE PENCIL", "codice": "7", "categoria": "IMM.MATERIALI", "dare": 80.0, "avere": 0}, {"conto": "CALCOLATRICE", "codice": "12", "categoria": "IMM.MATERIALI", "dare": 20.0, "avere": 0}, {"conto": "HARD DISK", "codice": "16", "categoria": "IMM.MATERIALI", "dare": 100.0, "avere": 0}, {"conto": "IPAD", "codice": "14", "categoria": "IMM.MATERIALI", "dare": 400.0, "avere": 0}, {"conto": "IPHONE 12", "codice": "15", "categoria": "IMM.MATERIALI", "dare": 415.0, "avere": 0}, {"conto": "LAPTOP", "codice": "13", "categoria": "IMM.MATERIALI", "dare": 2400.0, "avere": 0}, {"conto": "OROLOGIO D-W", "codice": "18", "categoria": "IMM.MATERIALI", "dare": 50.0, "avere": 0}, {"conto": "ZAINO SCUOLA", "codice": "17", "categoria": "IMM.MATERIALI", "dare": 50.0, "avere": 0}, {"conto": "POWER BANK", "codice": "38", "categoria": "IMM.MATERIALI", "dare": 55.99, "avere": 0}, {"conto": "IPHONE 16", "codice": "48", "categoria": "IMM.MATERIALI", "dare": 720.0, "avere": 0}, {"conto": "OROLOGIO SEIKO", "codice": "49", "categoria": "IMM.MATERIALI", "dare": 400.0, "avere": 0}, {"conto": "TITOLI C/C", "codice": "11", "categoria": "IMM. FINANZIARIE", "dare": 15312.81, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 2404.12, "avere": 0}, {"conto": "BPER PREPAGATA C/C", "codice": "9", "categoria": "DISP. LIQUIDE", "dare": 0.71, "avere": 0}, {"conto": "BILANCIO DI APERTURA", "codice": "44", "categoria": "CONTO TRANSITORIO", "dare": 0, "avere": 22408.63}]}, {"data": "2025-01-01", "descrizione": "Riapertura passività e netto", "righe": [{"conto": "BILANCIO DI APERTURA", "codice": "44", "categoria": "RIAPERTURA CONTI", "dare": 22408.58, "avere": 0}, {"conto": "CAPITALE SOCIALE", "codice": "2", "categoria": "PATRIMONIO NETTO", "dare": 0, "avere": 16044.19}, {"conto": "UTILE DELL'ESERCIZIO", "codice": "42", "categoria": "PATRIMONIO NETTO", "dare": 0, "avere": 2423.76}, {"conto": "RISERVA STATUTARIA", "codice": "57", "categoria": "PATRIMONIO NETTO", "dare": 0, "avere": 2923.43}, {"conto": "F.  AMMORTAMENTO IPAD", "codice": "28", "categoria": "RETTIFICA ATTIVO", "dare": 0, "avere": 120.0}, {"conto": "F. AMMORTAMENTO APPLE PENCIL", "codice": "29", "categoria": "RETTIFICA ATTIVO", "dare": 0, "avere": 12.0}, {"conto": "F. AMMORTAMENTO CALCOLATRICE", "codice": "33", "categoria": "RETTIFICA ATTIVO", "dare": 0, "avere": 3.0}, {"conto": "F. AMMORTAMENTO HARD DISK", "codice": "31", "categoria": "RETTIFICA ATTIVO", "dare": 0, "avere": 15.0}, {"conto": "F. AMMORTAMENTO IPHONE 12", "codice": "30", "categoria": "RETTIFICA ATTIVO", "dare": 0, "avere": 315.0}, {"conto": "F. AMMORTAMENTO LAPTOP", "codice": "54", "categoria": "RETTIFICA ATTIVO", "dare": 0, "avere": 190.0}, {"conto": "F. AMMORTAMENTO OROLOGIO D- W", "codice": "34", "categoria": "RETTIFICA ATTIVO", "dare": 0, "avere": 7.5}, {"conto": "F. AMMORTAMENTO ZAINO SCUOLA", "codice": "24", "categoria": "RETTIFICA ATTIVO", "dare": 0, "avere": 7.5}, {"conto": "F. AMMORTAMENTO POWER BANK", "codice": "41", "categoria": "RETTIFICA ATTIVO", "dare": 0, "avere": 27.2}, {"conto": "F. AMMORTAMENTO OROLOGIO SEIKO", "codice": "52", "categoria": "RETTIFICA ATTIVO", "dare": 0, "avere": 20.0}, {"conto": "F. AMMORTAMENTO LAPTOP OLD", "codice": "27", "categoria": "RETTIFICA ATTIVO", "dare": 0, "avere": 300.0}]}, {"data": "2026-01-07", "descrizione": "Versamento titoli", "righe": [{"conto": "TITOLI C/C", "codice": "11", "categoria": "IMM. FINANZIARIE", "dare": 200.0, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 200.0}]}, {"data": "2026-01-17", "descrizione": "Versamento periodico genitori", "righe": [{"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 600.0, "avere": 0}, {"conto": "GENITORI C/ENT.", "codice": "6", "categoria": "RICAVI", "dare": 0, "avere": 600.0}]}, {"data": "2026-01-20", "descrizione": "Accredito rimborsi PwC", "righe": [{"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 58.0, "avere": 0}, {"conto": "RIMBORSI PWC", "codice": "58", "categoria": "RICAVI", "dare": 0, "avere": 58.0}]}, {"data": "2026-01-21", "descrizione": "Ricariche prepagata", "righe": [{"conto": "BPER PREPAGATA C/C", "codice": "9", "categoria": "DISP. LIQUIDE", "dare": 60.0, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 60.0}]}, {"data": "2026-01-22", "descrizione": "Stipendio gennaio PwC", "righe": [{"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 783.0, "avere": 0}, {"conto": "STIPENDI PWC", "codice": "50", "categoria": "RICAVI", "dare": 0, "avere": 783.0}]}, {"data": "2026-01-31", "descrizione": "Acquisti lavoro Bper c/c", "righe": [{"conto": "LAVORO C/ACQUISTI", "codice": "5", "categoria": "COSTI", "dare": 348.55, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 348.55}]}, {"data": "2026-01-31", "descrizione": "Spese diverse c/c", "righe": [{"conto": "SPESE DIVERSE", "codice": "8", "categoria": "COSTI", "dare": 343.55, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 343.55}]}, {"data": "2026-01-31", "descrizione": "Spese Bper c/c", "righe": [{"conto": "SPESE C/C", "codice": "59", "categoria": "COSTI", "dare": 18.24, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 18.24}]}, {"data": "2026-01-31", "descrizione": "Commissioni prepagata", "righe": [{"conto": "COMMISSIONI PREPAGATA", "codice": "60", "categoria": "COSTI", "dare": 1.0, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 1.0}]}, {"data": "2026-01-31", "descrizione": "Spese diverse cassa", "righe": [{"conto": "SPESE DIVERSE", "codice": "8", "categoria": "COSTI", "dare": 21.8, "avere": 0}, {"conto": "CASSA", "codice": "3", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 21.8}]}, {"data": "2026-01-31", "descrizione": "Spese lavoro cassa", "righe": [{"conto": "LAVORO C/ACQUISTI", "codice": "5", "categoria": "COSTI", "dare": 60.9, "avere": 0}, {"conto": "CASSA", "codice": "3", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 60.9}]}, {"data": "2026-01-31", "descrizione": "Rettifiche spese cassa", "righe": [{"conto": "CASSA", "codice": "3", "categoria": "DISP. LIQUIDE", "dare": 82.7, "avere": 0}, {"conto": "RETTIFICHE PER SPESE ANNUALI", "codice": "35", "categoria": "RICAVI", "dare": 0, "avere": 82.7}]}, {"data": "2026-01-31", "descrizione": "Spese lavoro prepagata", "righe": [{"conto": "LAVORO C/ACQUISTI", "codice": "5", "categoria": "COSTI", "dare": 2.2, "avere": 0}, {"conto": "BPER PREPAGATA C/C", "codice": "9", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 2.2}]}, {"data": "2026-01-31", "descrizione": "Spese diverse prepagata", "righe": [{"conto": "SPESE DIVERSE", "codice": "8", "categoria": "COSTI", "dare": 42.18, "avere": 0}, {"conto": "BPER PREPAGATA C/C", "codice": "9", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 42.18}]}, {"data": null, "descrizione": "DESCRIZIONE", "righe": [{"conto": "CONTO", "codice": "CODICE", "categoria": "CATEGORIA", "dare": 0, "avere": 0}]}, {"data": "2024-02-08", "descrizione": "Versamento periodico titoli", "righe": [{"conto": "TITOLI C/C", "codice": "11", "categoria": "IMM. FINANZIARIE", "dare": 200.0, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP.LIQUIDE", "dare": 0, "avere": 200.0}]}, {"data": "2026-02-12", "descrizione": "Rimborso spesa Futsal", "righe": [{"conto": "BPER C/C", "codice": "1", "categoria": "DISP.LIQUIDE", "dare": 60.0, "avere": 0}, {"conto": "RIMBORSI FUTSAL", "codice": "61", "categoria": "RICAVI", "dare": 0, "avere": 60.0}]}, {"data": "2026-02-12", "descrizione": "Versamento periodico genitori", "righe": [{"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 600.0, "avere": 0}, {"conto": "GENITORI C/ENT.", "codice": "6", "categoria": "RICAVI", "dare": 0, "avere": 600.0}]}, {"data": "2026-02-12", "descrizione": "Rimborso Canva Futsal", "righe": [{"conto": "BPER C/C", "codice": "1", "categoria": "DISP.LIQUIDE", "dare": 24.0, "avere": 0}, {"conto": "RIMBORSI FUTSAL", "codice": "61", "categoria": "RICAVI", "dare": 0, "avere": 24.0}]}, {"data": "2026-02-27", "descrizione": "Stipendio gennaio PwC", "righe": [{"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 766.0, "avere": 0}, {"conto": "STIPENDI PWC", "codice": "50", "categoria": "RICAVI", "dare": 0, "avere": 766.0}]}, {"data": "2026-02-27", "descrizione": "Rimborso spese Giappone", "righe": [{"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 1245.0, "avere": 0}, {"conto": "TERZI C/ENT.", "codice": "39", "categoria": "RICAVI", "dare": 0, "avere": 1245.0}]}, {"data": "2026-02-28", "descrizione": "Acquisti lavoro Bper c/c", "righe": [{"conto": "LAVORO C/ACQUISTI", "codice": "5", "categoria": "COSTI", "dare": 460.89, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 460.89}]}, {"data": "2026-02-28", "descrizione": "Spese diverse c/c", "righe": [{"conto": "SPESE DIVERSE", "codice": "8", "categoria": "COSTI", "dare": 1210.35, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 1210.35}]}, {"data": "2026-02-28", "descrizione": "Commissioni prepagata", "righe": [{"conto": "COMMISSIONI PREPAGATA", "codice": "60", "categoria": "COSTI", "dare": 0.5, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 0.5}]}, {"data": "2026-02-28", "descrizione": "Spese diverse cassa", "righe": [{"conto": "SPESE DIVERSE", "codice": "8", "categoria": "COSTI", "dare": 35.5, "avere": 0}, {"conto": "CASSA", "codice": "3", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 35.5}]}, {"data": "2026-02-28", "descrizione": "Spese lavoro cassa", "righe": [{"conto": "LAVORO C/ACQUISTI", "codice": "5", "categoria": "COSTI", "dare": 97.9, "avere": 0}, {"conto": "CASSA", "codice": "3", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 97.9}]}, {"data": "2026-02-28", "descrizione": "Rettifiche spese cassa", "righe": [{"conto": "CASSA", "codice": "3", "categoria": "DISP. LIQUIDE", "dare": 133.4, "avere": 0}, {"conto": "RETTIFICHE PER SPESE ANNUALI", "codice": "35", "categoria": "RICAVI", "dare": 0, "avere": 133.4}]}, {"data": "2026-02-28", "descrizione": "Spese lavoro prepagata", "righe": [{"conto": "LAVORO C/ACQUISTI", "codice": "5", "categoria": "COSTI", "dare": 2.2, "avere": 0}, {"conto": "BPER PREPAGATA C/C", "codice": "9", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 2.2}]}, {"data": "2026-02-28", "descrizione": "Spese diverse prepagata", "righe": [{"conto": "SPESE DIVERSE", "codice": "8", "categoria": "COSTI", "dare": 48.88, "avere": 0}, {"conto": "BPER PREPAGATA C/C", "codice": "9", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 48.88}]}, {"data": "2026-02-28", "descrizione": "Ricariche prepagata", "righe": [{"conto": "BPER PREPAGATA C/C", "codice": "9", "categoria": "DISP. LIQUIDE", "dare": 60.0, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 60.0}]}, {"data": null, "descrizione": "DESCRIZIONE", "righe": [{"conto": "CONTO", "codice": "CODICE", "categoria": "CATEGORIA", "dare": 0, "avere": 0}]}, {"data": "2025-03-07", "descrizione": "Versamento periodico titoli", "righe": [{"conto": "TITOLI C/C", "codice": "11", "categoria": "IMM. FINANZIARIE", "dare": 200.0, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP.LIQUIDE", "dare": 0, "avere": 200.0}]}, {"data": "2026-03-08", "descrizione": "Versamento periodico genitori", "righe": [{"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 600.0, "avere": 0}, {"conto": "GENITORI C/ENT.", "codice": "6", "categoria": "RICAVI", "dare": 0, "avere": 600.0}]}, {"data": "2026-03-09", "descrizione": "Stipendio gennaio PwC", "righe": [{"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 782.0, "avere": 0}, {"conto": "STIPENDI PWC", "codice": "50", "categoria": "RICAVI", "dare": 0, "avere": 782.0}]}, {"data": "2026-03-10", "descrizione": "Rimborsi spese PwC", "righe": [{"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 204.9, "avere": 0}, {"conto": "RIMBORSI PWC", "codice": "58", "categoria": "RICAVI", "dare": 0, "avere": 204.9}]}, {"data": "2026-03-31", "descrizione": "Acquisti lavoro Bper c/c", "righe": [{"conto": "LAVORO C/ACQUISTI", "codice": "5", "categoria": "COSTI", "dare": 733.45, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 733.45}]}, {"data": "2026-03-31", "descrizione": "Spese diverse c/c", "righe": [{"conto": "SPESE DIVERSE", "codice": "8", "categoria": "COSTI", "dare": 618.23, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 618.23}]}, {"data": "2026-03-31", "descrizione": "Spese tenuta conto", "righe": [{"conto": "SPESE C/C", "codice": "59", "categoria": "COSTI", "dare": 18.64, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 18.64}]}, {"data": "2026-03-31", "descrizione": "Ricarica prepagata", "righe": [{"conto": "BPER PREPAGATA C/C", "codice": "9", "categoria": "DISP. LIQUIDE", "dare": 30.0, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 30.0}]}, {"data": "2026-03-31", "descrizione": "Spese diverse prepagata", "righe": [{"conto": "SPESE DIVERSE", "codice": "8", "categoria": "COSTI", "dare": 21.97, "avere": 0}, {"conto": "BPER PREPAGATA C/C", "codice": "9", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 21.97}]}, {"data": "2026-03-31", "descrizione": "Spese diverse cassa", "righe": [{"conto": "SPESE DIVERSE", "codice": "8", "categoria": "COSTI", "dare": 43.0, "avere": 0}, {"conto": "CASSA", "codice": "3", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 43.0}]}, {"data": "2026-03-31", "descrizione": "Spese lavoro cassa", "righe": [{"conto": "LAVORO C/ACQUISTI", "codice": "5", "categoria": "COSTI", "dare": 10.0, "avere": 0}, {"conto": "CASSA", "codice": "3", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 10.0}]}, {"data": "2026-03-31", "descrizione": "Rettifiche spese cassa", "righe": [{"conto": "CASSA", "codice": "3", "categoria": "DISP. LIQUIDE", "dare": 53.0, "avere": 0}, {"conto": "RETTIFICHE PER SPESE ANNUALI", "codice": "35", "categoria": "RICAVI", "dare": 0, "avere": 53.0}]}, {"data": null, "descrizione": "DESCRIZIONE", "righe": [{"conto": "CONTO", "codice": "CODICE", "categoria": "CATEGORIA", "dare": 0, "avere": 0}]}, {"data": "2026-04-07", "descrizione": "Versamento periodico titoli", "righe": [{"conto": "TITOLI C/C", "codice": "11", "categoria": "IMM. FINANZIARIE", "dare": 200.0, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP.LIQUIDE", "dare": 0, "avere": 200.0}]}, {"data": "2026-04-10", "descrizione": "Versamento periodico genitori", "righe": [{"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 600.0, "avere": 0}, {"conto": "GENITORI C/ENT.", "codice": "6", "categoria": "RICAVI", "dare": 0, "avere": 600.0}]}, {"data": "2026-04-15", "descrizione": "Stipendio gennaio PwC", "righe": [{"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 776.0, "avere": 0}, {"conto": "STIPENDI PWC", "codice": "50", "categoria": "RICAVI", "dare": 0, "avere": 776.0}]}, {"data": "2026-04-15", "descrizione": "Rimborsi spese PwC", "righe": [{"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 125.8, "avere": 0}, {"conto": "RIMBORSI PWC", "codice": "58", "categoria": "RICAVI", "dare": 0, "avere": 125.8}]}, {"data": "2026-04-16", "descrizione": "Rimborsi spese Futsal", "righe": [{"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 24.0, "avere": 0}, {"conto": "RIMBORSI FUTSAL", "codice": "61", "categoria": "RICAVI", "dare": 0, "avere": 24.0}]}, {"data": "2026-04-17", "descrizione": "Entrate da terzi (poi girocontate)", "righe": [{"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 5813.52, "avere": 0}, {"conto": "TERZI C/ENT.", "codice": "39", "categoria": "RICAVI", "dare": 0, "avere": 5813.52}]}, {"data": "2026-04-20", "descrizione": "Versamento per cambio titoli", "righe": [{"conto": "TITOLI C/C", "codice": "11", "categoria": "IMM. FINANZIARIE", "dare": 5500.0, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP.LIQUIDE", "dare": 0, "avere": 5500.0}]}, {"data": "2026-04-30", "descrizione": "Acquisti lavoro Bper c/c", "righe": [{"conto": "LAVORO C/ACQUISTI", "codice": "5", "categoria": "COSTI", "dare": 555.32, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 555.32}]}, {"data": "2026-04-30", "descrizione": "Spese diverse c/c", "righe": [{"conto": "SPESE DIVERSE", "codice": "8", "categoria": "COSTI", "dare": 1382.19, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 1382.19}]}, {"data": "2026-04-30", "descrizione": "Spese tenuta conto", "righe": [{"conto": "SPESE C/C", "codice": "59", "categoria": "COSTI", "dare": 19.06, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 19.06}]}, {"data": "2026-04-30", "descrizione": "Ricarica prepagata", "righe": [{"conto": "BPER PREPAGATA C/C", "codice": "9", "categoria": "DISP. LIQUIDE", "dare": 260.0, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 260.0}]}, {"data": "2026-04-30", "descrizione": "Spese diverse prepagata", "righe": [{"conto": "SPESE DIVERSE", "codice": "8", "categoria": "COSTI", "dare": 155.15, "avere": 0}, {"conto": "BPER PREPAGATA C/C", "codice": "9", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 155.15}]}, {"data": "2026-04-30", "descrizione": "Spese diverse cassa", "righe": [{"conto": "SPESE DIVERSE", "codice": "8", "categoria": "COSTI", "dare": 131.7, "avere": 0}, {"conto": "CASSA", "codice": "3", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 131.7}]}, {"data": "2026-04-30", "descrizione": "Spese lavoro cassa", "righe": [{"conto": "LAVORO C/ACQUISTI", "codice": "5", "categoria": "COSTI", "dare": 53.0, "avere": 0}, {"conto": "CASSA", "codice": "3", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 53.0}]}, {"data": "2026-04-30", "descrizione": "Rettifiche spese cassa", "righe": [{"conto": "CASSA", "codice": "3", "categoria": "DISP. LIQUIDE", "dare": 184.7, "avere": 0}, {"conto": "RETTIFICHE PER SPESE ANNUALI", "codice": "35", "categoria": "RICAVI", "dare": 0, "avere": 184.7}]}, {"data": "2026-04-30", "descrizione": "Commissioni ricariche prepagata", "righe": [{"conto": "COMMISSIONI PREPAGATA", "codice": "60", "categoria": "COSTI", "dare": 1.5, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 1.5}]}, {"data": null, "descrizione": "DESCRIZIONE", "righe": [{"conto": "CONTO", "codice": "CODICE", "categoria": "CATEGORIA", "dare": 0, "avere": 0}]}, {"data": "2026-05-08", "descrizione": "Versamento periodico titoli", "righe": [{"conto": "TITOLI C/C", "codice": "11", "categoria": "IMM. FINANZIARIE", "dare": 200.0, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP.LIQUIDE", "dare": 0, "avere": 200.0}]}, {"data": "2026-05-09", "descrizione": "Versamento periodico genitori", "righe": [{"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 1000.0, "avere": 0}, {"conto": "GENITORI C/ENT.", "codice": "6", "categoria": "RICAVI", "dare": 0, "avere": 1000.0}]}, {"data": "2026-05-27", "descrizione": "Stipendio gennaio PwC", "righe": [{"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 893.0, "avere": 0}, {"conto": "STIPENDI PWC", "codice": "50", "categoria": "RICAVI", "dare": 0, "avere": 893.0}]}, {"data": "2026-05-27", "descrizione": "Rimborsi spese PwC", "righe": [{"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 95.0, "avere": 0}, {"conto": "RIMBORSI PWC", "codice": "58", "categoria": "RICAVI", "dare": 0, "avere": 95.0}]}, {"data": "2026-05-27", "descrizione": "Rimborsi spese Futsal", "righe": [{"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 64.0, "avere": 0}, {"conto": "RIMBORSI FUTSAL", "codice": "61", "categoria": "RICAVI", "dare": 0, "avere": 64.0}]}, {"data": "2026-05-27", "descrizione": "Ricarica prepagata", "righe": [{"conto": "BPER PREPAGATA C/C", "codice": "9", "categoria": "DISP. LIQUIDE", "dare": 1300.0, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 1300.0}]}, {"data": "2026-05-31", "descrizione": "Acquisti lavoro Bper c/c", "righe": [{"conto": "LAVORO C/ACQUISTI", "codice": "5", "categoria": "COSTI", "dare": 459.17, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 459.17}]}, {"data": "2026-05-31", "descrizione": "Spese diverse c/c", "righe": [{"conto": "SPESE DIVERSE", "codice": "8", "categoria": "COSTI", "dare": 855.53, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 855.53}]}, {"data": "2026-05-31", "descrizione": "Spese tenuta conto", "righe": [{"conto": "SPESE C/C", "codice": "59", "categoria": "COSTI", "dare": 0.92, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 0.92}]}, {"data": "2026-05-31", "descrizione": "Spese diverse prepagata", "righe": [{"conto": "SPESE DIVERSE", "codice": "8", "categoria": "COSTI", "dare": 1397.89, "avere": 0}, {"conto": "BPER PREPAGATA C/C", "codice": "9", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 1397.89}]}, {"data": "2026-05-31", "descrizione": "Spese diverse cassa", "righe": [{"conto": "SPESE DIVERSE", "codice": "8", "categoria": "COSTI", "dare": 22.0, "avere": 0}, {"conto": "CASSA", "codice": "3", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 22.0}]}, {"data": "2026-05-31", "descrizione": "Spese lavoro cassa", "righe": [{"conto": "LAVORO C/ACQUISTI", "codice": "5", "categoria": "COSTI", "dare": 97.5, "avere": 0}, {"conto": "CASSA", "codice": "3", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 97.5}]}, {"data": "2026-05-31", "descrizione": "Rettifiche spese cassa", "righe": [{"conto": "CASSA", "codice": "3", "categoria": "DISP. LIQUIDE", "dare": 119.5, "avere": 0}, {"conto": "RETTIFICHE PER SPESE ANNUALI", "codice": "35", "categoria": "RICAVI", "dare": 0, "avere": 119.5}]}, {"data": "2026-05-31", "descrizione": "Commissioni ricariche prepagata", "righe": [{"conto": "COMMISSIONI PREPAGATA", "codice": "60", "categoria": "COSTI", "dare": 0.5, "avere": 0}, {"conto": "BPER C/C", "codice": "1", "categoria": "DISP. LIQUIDE", "dare": 0, "avere": 0.5}]}, {"data": null, "descrizione": "DESCRIZIONE", "righe": [{"conto": "CONTO", "codice": "CODICE", "categoria": "CATEGORIA", "dare": 0, "avere": 0}]}, {"data": null, "descrizione": "DESCRIZIONE", "righe": [{"conto": "CONTO", "codice": "CODICE", "categoria": "CATEGORIA", "dare": 0, "avere": 0}]}, {"data": "2025-12-15", "descrizione": "Bonifico rimborso genitori", "righe": [{"conto": "BPER C/C", "codice": "01", "categoria": "DISP.LIQUIDE", "dare": 0, "avere": 0}, {"conto": "GENITORI C/ENT.", "codice": "06", "categoria": "GENITORI", "dare": 0, "avere": 0}]}, {"data": "2025-12-16", "descrizione": "Rimborsi spese", "righe": [{"conto": "BPER C/C", "codice": "01", "categoria": "DISP.LIQUIDE", "dare": 0, "avere": 0}, {"conto": "SOPRAVVENIENZE ATTIVE", "codice": "46", "categoria": "SOPRAVVENIENZE", "dare": 0, "avere": 0}]}, {"data": "2025-12-18", "descrizione": "Bonifico compleanno", "righe": [{"conto": "BPER C/C", "codice": "01", "categoria": "DISP.LIQUIDE", "dare": 0, "avere": 0}, {"conto": "GENITORI C/ENT.", "codice": "06", "categoria": "GENITORI", "dare": 0, "avere": 0}]}, {"data": "2025-12-18", "descrizione": "Bonifico natale", "righe": [{"conto": "BPER C/C", "codice": "01", "categoria": "DISP.LIQUIDE", "dare": 0, "avere": 0}, {"conto": "GENITORI C/ENT.", "codice": "06", "categoria": "GENITORI", "dare": 0, "avere": 0}]}, {"data": "2023-12-05", "descrizione": "Versamento periodico titoli", "righe": [{"conto": "TITOLI C/C", "codice": "11", "categoria": "INVESTIMENTI", "dare": 0, "avere": 0}, {"conto": "BPER C/C", "codice": "01", "categoria": "DISP.LIQUIDE", "dare": 0, "avere": 0}]}, {"data": "2026-12-27", "descrizione": "IPhone regalo Natale", "righe": [{"conto": "IPHONE 16", "codice": "48", "categoria": "TECNOLOGIA", "dare": 0, "avere": 0}, {"conto": "SOPRAVVENIENZE ATTIVE", "codice": "46", "categoria": "SOPRAVVENIENZE", "dare": 0, "avere": 0}]}, {"data": "2026-12-27", "descrizione": "Orologio regalo zia Mina per laurea", "righe": [{"conto": "OROLOGIO SEIKO", "codice": "49", "categoria": "TECNOLOGIA", "dare": 0, "avere": 0}, {"conto": "SOPRAVVENIENZE ATTIVE", "codice": "46", "categoria": "SOPRAVVENIENZE", "dare": 0, "avere": 0}]}, {"data": "2026-12-31", "descrizione": "Pagato stipendio", "righe": [{"conto": "BPER C/C", "codice": "01", "categoria": "DISP.LIQUIDE", "dare": 0, "avere": 0}, {"conto": "STIPENDI PWC", "codice": "50", "categoria": "STIPENDI", "dare": 0, "avere": 0}]}, {"data": "2024-12-31", "descrizione": "Rettifica prepagata", "righe": [{"conto": "BPER PREPAGATA C/C", "codice": "09", "categoria": "DISP.LIQUIDE", "dare": 0, "avere": 0}, {"conto": "BPER C/C", "codice": "01", "categoria": "DISP.LIQUIDE", "dare": 0, "avere": 0}]}, {"data": "2024-12-31", "descrizione": "Rettifica mensile spese", "righe": [{"conto": "CASSA", "codice": "03", "categoria": "DISP.LIQUIDE", "dare": 0, "avere": 0}, {"conto": "RETTIFICHE PER SPESE ANNUALI", "codice": "35", "categoria": "RETTIFICA", "dare": 0, "avere": 0}]}, {"data": "2026-12-31", "descrizione": "Ricarica prepagata", "righe": [{"conto": "BPER PREPAGATA C/C", "codice": "09", "categoria": "DISP.LIQUIDE", "dare": 0, "avere": 0}, {"conto": "BPER C/C", "codice": "01", "categoria": "DISP.LIQUIDE", "dare": 0, "avere": 0}]}, {"data": "2026-12-31", "descrizione": "Svalutato IPhone 12", "righe": [{"conto": "SVALUTAZIONE IPHONE 12", "codice": "55", "categoria": "SVALUTAZIONE", "dare": 0, "avere": 0}, {"conto": "IPHONE 12", "codice": "15", "categoria": "TECNOLOGIA", "dare": 0, "avere": 0}]}, {"data": "2024-12-31", "descrizione": "Rettifica entrate-spese", "righe": [{"conto": "CASSA", "codice": "03", "categoria": "DISP.LIQUIDE", "dare": 0, "avere": 0}, {"conto": "RETTIFICHE PER SPESE ANNUALI", "codice": "35", "categoria": "RETTIFICA", "dare": 0, "avere": 0}]}, {"data": "2026-12-31", "descrizione": "Rettifiche valore c/c al 31/12", "righe": [{"conto": "BPER C/C", "codice": "01", "categoria": "DISP.LIQUIDE", "dare": 0, "avere": 0}, {"conto": "SOPRAVVENIENZE ATTIVE", "codice": "46", "categoria": "RETTIFICA", "dare": 0, "avere": 0}]}, {"data": "2026-12-31", "descrizione": "Rettifiche valore prepagata al 31/12", "righe": [{"conto": "SOPRAVVENIENZE PASSIVE", "codice": "56", "categoria": "RETTIFICA", "dare": 0, "avere": 0}, {"conto": "BPER PREPAGATA C/C", "codice": "09", "categoria": "DISP.LIQUIDE", "dare": 0, "avere": 0}]}, {"data": "2026-12-31", "descrizione": "Rettifiche valore cassa al 31/12", "righe": [{"conto": "CASSA", "codice": "03", "categoria": "DISP.LIQUIDE", "dare": 0, "avere": 0}, {"conto": "SOPRAVVENIENZE ATTIVE", "codice": "46", "categoria": "RETTIFICA", "dare": 0, "avere": 0}]}, {"data": "2026-12-31", "descrizione": "Accantonamento utile 2024 a riserva", "righe": [{"conto": "UTILE DELL'ESERCIZIO", "codice": "42", "categoria": "UTILE", "dare": 0, "avere": 0}, {"conto": "RISERVA STATUTARIA", "codice": "57", "categoria": "CAPITALE", "dare": 0, "avere": 0}]}, {"data": "2025-12-31", "descrizione": "Rilevato utile dell'esercizio", "righe": [{"conto": "UTILE DELL'ESERCIZIO", "codice": "42", "categoria": "UTILE", "dare": 0, "avere": 0}]}], "dispTarget": {"BPER C/C": 2443.97, "PREPAGATA": 26.76, "CASSA": 0.0}, "cespiti": [{"conto": "LAPTOP OLD", "classe": "LAPTOP OLD", "anno": 2023, "costo": 500.0, "aliquota": 0.2, "quota": 100.0, "vn": 0, "fondo": 300.0, "note": ""}, {"conto": "IPAD", "classe": "IPAD", "anno": 2023, "costo": 400.0, "aliquota": 0.1, "quota": 40.0, "vn": 0, "fondo": 120.0, "note": ""}, {"conto": "APPLE PENCIL", "classe": "APPLE PENCIL", "anno": 2023, "costo": 79.95, "aliquota": 0.05, "quota": 4.0, "vn": 0, "fondo": 11.99, "note": ""}, {"conto": "IPHONE 12", "classe": "IPHONE 12", "anno": 2023, "costo": 700.0, "aliquota": 0.15, "quota": 105.0, "vn": 0, "fondo": 315.0, "note": ""}, {"conto": "HARD DISK", "classe": "HARD DISK", "anno": 2023, "costo": 100.0, "aliquota": 0.05, "quota": 5.0, "vn": 0, "fondo": 15.0, "note": ""}, {"conto": "ZAINO SCUOLA", "classe": "ZAINO SCUOLA", "anno": 2023, "costo": 50.0, "aliquota": 0.05, "quota": 2.5, "vn": 0, "fondo": 7.5, "note": ""}, {"conto": "CALCOLATRICE", "classe": "CALCOLATRICE", "anno": 2023, "costo": 20.0, "aliquota": 0.05, "quota": 1.0, "vn": 0, "fondo": 3.0, "note": ""}, {"conto": "OROLOGIO D - W", "classe": "OROLOGIO D - W", "anno": 2023, "costo": 50.0, "aliquota": 0.05, "quota": 2.5, "vn": 0, "fondo": 7.5, "note": ""}, {"conto": "POWER BANK OLD", "classe": "POWER BANK", "anno": 2024, "costo": 20.0, "aliquota": 0.5, "quota": 10.0, "vn": 0, "fondo": 20.0, "note": ""}, {"conto": "LAPTOP NEW", "classe": "LAPTOP", "anno": 2025, "costo": 1900.0, "aliquota": 0.1, "quota": 190.0, "vn": 0, "fondo": 190.0, "note": ""}, {"conto": "POWER BANK NEW", "classe": "POWER BANK", "anno": 2025, "costo": 35.99, "aliquota": 0.2, "quota": 7.2, "vn": 0, "fondo": 7.2, "note": ""}, {"conto": "IPHONE 16", "classe": "IPHONE 16", "anno": 2025, "costo": 720.0, "aliquota": 0.17, "quota": 122.4, "vn": 0, "fondo": 720.0, "note": "Ammortamento a partire da anno 2026"}, {"conto": "OROLOGIO SEIKO", "classe": "OROLOGIO SEIKO", "anno": 2025, "costo": 400.0, "aliquota": 0.05, "quota": 20.0, "vn": 0, "fondo": 20.0, "note": ""}]};
+
+async function seedData(anno){
+  if(!db) return false;
+  const base=`finanze/${anno}`;
+  try{
+    const flag=await db.ref(`${base}/_seedVersion`).get();
+    if(flag.exists() && flag.val()===SEED_VERSION) return false;
+    await db.ref(`${base}/scritture`).remove();
+    await db.ref(`${base}/movimenti`).remove();
+    await db.ref(`${base}/pdc`).remove();
+    await db.ref(`${base}/cespiti`).remove();
+    const upd={};
+    (SEED.pdc||[]).forEach(c=> upd[`pdc/${keyOf(c.codice)+"_"+keyOf(c.nome)}`]=c);
+    (SEED.movimenti||[]).forEach(m=>{ const k=db.ref(`${base}/movimenti`).push().key; upd[`movimenti/${k}`]={...m}; });
+    (SEED.scritture||[]).forEach(s=>{ const k=db.ref(`${base}/scritture`).push().key; upd[`scritture/${k}`]={...s}; });
+    (SEED.cespiti||[]).forEach(c=>{ const k=db.ref(`${base}/cespiti`).push().key; upd[`cespiti/${k}`]={...c}; });
+    upd['meta/dispTarget']=SEED.dispTarget||{};
+    upd['_seedVersion']=SEED_VERSION;
+    await db.ref(base).update(upd);
+    return true;
+  }catch(e){ console.warn("seed:",e); return false; }
+}
 
 // ============================================================
-// HELPERS
+// COSTANTI + HELPERS
 // ============================================================
-const num = (n) => (isNaN(Number(n)) ? 0 : Number(n));
-const eur = (n) => (n < 0 ? "−" : "") + "€ " + Math.abs(num(n))
-  .toLocaleString("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
-const keyOf = (s) => String(s || "").replace(/[.#$/\[\]]/g, "_").trim() || "_";
-const distinct = (arr) => [...new Set(arr.filter(Boolean))];
+const MESI = ["gennaio","febbraio","marzo","aprile","maggio","giugno","luglio","agosto","settembre","ottobre","novembre","dicembre"];
+const mIdxName = (m) => MESI.indexOf(String(m||"").toLowerCase().trim());
+const num = (n) => { if (n==null||n==="") return 0; const v = Number(String(n).replace(",",".")); return isNaN(v)?0:v; };
+const eur = (n) => (n<0?"−":"") + "€ " + Math.abs(num(n)).toLocaleString("it-IT",{minimumFractionDigits:2,maximumFractionDigits:2});
+const cap = (s) => s ? String(s).charAt(0).toUpperCase()+String(s).slice(1).toLowerCase() : s;
+const keyOf = (s) => String(s||"").replace(/[.#$/\[\]]/g,"_").trim()||"_";
+const distinct = (a) => [...new Set(a.filter(x=>x!=null && x!==""))];
+const PALETTE = ["#2d5e3e","#b8954b","#b54343","#3c6e91","#7a5a1d","#6b8f71","#a76b8f","#4a4a4a","#c08020","#5b8c5a","#8a6d3b","#a05050","#577590","#9b7b4d","#6d6875","#43658b"];
+const isLiquid = (cat) => /LIQUID/i.test(cat||"");
 
-const PALETTE = ["#2d5e3e","#b8954b","#b54343","#3c6e91","#7a5a1d","#6b8f71",
-  "#a76b8f","#4a4a4a","#c08020","#5b8c5a","#8a6d3b","#a05050","#577590",
-  "#9b7b4d","#6d6875","#43658b"];
+function toISO(v){
+  if (v instanceof Date && !isNaN(v)) return v.toISOString().slice(0,10);
+  if (typeof v === "number") { const d=new Date(Date.UTC(1899,11,30)+v*86400000); return d.toISOString().slice(0,10); }
+  if (typeof v === "string"){
+    const m = v.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
+    if (m){ let y=+m[3]; if(y<100) y+=2000; return `${y}-${String(+m[2]).padStart(2,"0")}-${String(+m[1]).padStart(2,"0")}`; }
+  }
+  return null;
+}
+const meseOf = (iso) => iso ? (parseInt(iso.slice(5,7),10)-1) : null;
+const fmtData = (iso) => { if(!iso) return ""; const [y,m,d]=iso.split("-"); return `${d}/${m}/${y.slice(2)}`; };
 
 // ============================================================
-// LOGIN
+// LOGIN (Firebase email + password)
 // ============================================================
-function Login() {
-  const [email, setEmail] = useState("");
-  const [pw, setPw] = useState("");
-  const [err, setErr] = useState("");
-  const [busy, setBusy] = useState(false);
-  const submit = async (e) => {
-    e.preventDefault();
-    setErr(""); setBusy(true);
-    try {
-      await auth.signInWithEmailAndPassword(email.trim(), pw);
-      // l'app passa allo stato loggato tramite onAuthStateChanged
-    } catch (ex) {
-      const map = {
-        "auth/invalid-credential": "Email o password errate.",
-        "auth/invalid-email": "Email non valida.",
-        "auth/user-not-found": "Utente inesistente.",
-        "auth/wrong-password": "Password errata.",
-        "auth/too-many-requests": "Troppi tentativi, riprova tra poco."
-      };
-      setErr(map[ex.code] || ("Accesso non riuscito (" + (ex.code || ex.message) + ")."));
-    }
-    setBusy(false);
-  };
+function Login(){
+  const [email,setEmail]=useState(""); const [pw,setPw]=useState("");
+  const [err,setErr]=useState(""); const [busy,setBusy]=useState(false);
+  const submit=async(e)=>{ e.preventDefault(); setErr(""); setBusy(true);
+    try{ await auth.signInWithEmailAndPassword(email.trim(),pw); }
+    catch(ex){ const map={"auth/invalid-credential":"Email o password errate.","auth/invalid-email":"Email non valida.","auth/user-not-found":"Utente inesistente.","auth/wrong-password":"Password errata.","auth/too-many-requests":"Troppi tentativi, riprova tra poco."};
+      setErr(map[ex.code]||("Accesso non riuscito ("+(ex.code||ex.message)+").")); }
+    setBusy(false); };
   return (
-    <div className="login-shell">
-      <form className="login-card" onSubmit={submit}>
-        <div className="logo">Finanze Personali</div>
-        <div className="tag">Entrate · Uscite · Budget</div>
-        {err && <div className="err">{err}</div>}
-        <div className="field">
-          <label>Email</label>
-          <input type="email" autoFocus value={email} onChange={e => setEmail(e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Password</label>
-          <input type="password" value={pw} onChange={e => setPw(e.target.value)} />
-        </div>
-        <button className="btn accent" type="submit" disabled={busy}>{busy ? "Accesso…" : "Entra"}</button>
-      </form>
-    </div>
+    <div className="login-shell"><form className="login-card" onSubmit={submit}>
+      <div className="logo">Contabilità Personale</div>
+      <div className="tag">Partita doppia · Davide</div>
+      {err && <div className="err">{err}</div>}
+      <div className="field"><label>Email</label><input type="email" autoFocus value={email} onChange={e=>setEmail(e.target.value)} /></div>
+      <div className="field"><label>Password</label><input type="password" value={pw} onChange={e=>setPw(e.target.value)} /></div>
+      <button className="btn accent" type="submit" disabled={busy}>{busy?"Accesso…":"Entra"}</button>
+    </form></div>
   );
 }
 
 // ============================================================
-// DATA HOOK
+// DATA HOOK — piano dei conti + scritture
 // ============================================================
-function useData(anno, user) {
-  const [movimenti, setMov] = useState([]);
-  const [budget, setBudget] = useState([]);
-  const [saldi, setSaldi] = useState([]);
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    if (!db || !user) { setLoading(false); return; }
+function useData(anno, user){
+  const [pdc,setPdc]=useState([]);
+  const [scritture,setScritture]=useState([]);
+  const [movimenti,setMovimenti]=useState([]);
+  const [cespiti,setCespiti]=useState([]);
+  const [dispTarget,setDispTarget]=useState({});
+  const [loading,setLoading]=useState(true);
+  useEffect(()=>{
+    if(!db||!user){ setLoading(false); return; }
     setLoading(true);
-    const base = `finanze/${anno}`;
-    const rM = db.ref(`${base}/movimenti`), rB = db.ref(`${base}/budget`), rS = db.ref(`${base}/saldiIniziali`);
-    const toArr = (snap) => { const o = snap.val() || {}; return Object.keys(o).map(k => ({ _id: k, ...o[k] })); };
-    rM.on("value", s => { setMov(toArr(s)); setLoading(false); });
-    rB.on("value", s => setBudget(toArr(s)));
-    rS.on("value", s => setSaldi(toArr(s)));
-    return () => { rM.off(); rB.off(); rS.off(); };
-  }, [anno, user]);
-  return { movimenti, budget, saldi, loading };
+    const base=`finanze/${anno}`;
+    const rP=db.ref(`${base}/pdc`), rS=db.ref(`${base}/scritture`), rM=db.ref(`${base}/movimenti`), rT=db.ref(`${base}/meta/dispTarget`), rC=db.ref(`${base}/cespiti`);
+    const toArr=(snap)=>{ const o=snap.val()||{}; return Object.keys(o).map(k=>({_id:k,...o[k]})); };
+    rP.on("value",s=>setPdc(toArr(s)));
+    rS.on("value",s=>{ const arr=toArr(s).map(x=>({...x,righe:Array.isArray(x.righe)?x.righe:Object.values(x.righe||{})})); setScritture(arr); setLoading(false); });
+    rM.on("value",s=>setMovimenti(toArr(s)));
+    rT.on("value",s=>setDispTarget(s.val()||{}));
+    rC.on("value",s=>setCespiti(toArr(s)));
+    return ()=>{ rP.off(); rS.off(); rM.off(); rT.off(); rC.off(); };
+  },[anno,user]);
+  return { pdc, scritture, movimenti, cespiti, dispTarget, loading };
 }
 
 // ============================================================
 // CHART
 // ============================================================
-function ChartBox({ type, data, options, className }) {
-  const ref = useRef(null), inst = useRef(null);
-  useEffect(() => {
-    if (!ref.current) return;
-    if (inst.current) inst.current.destroy();
-    inst.current = new Chart(ref.current, { type, data, options });
-    return () => { if (inst.current) inst.current.destroy(); };
+function ChartBox({ type, data, options, className }){
+  const ref=useRef(null), inst=useRef(null);
+  useEffect(()=>{ if(!ref.current) return;
+    if(inst.current) inst.current.destroy();
+    inst.current=new Chart(ref.current,{type,data,options});
+    return ()=>{ if(inst.current) inst.current.destroy(); };
   });
-  return <div className={"chart-wrap " + (className || "")}><canvas ref={ref}></canvas></div>;
+  return <div className={"chart-wrap "+(className||"")}><canvas ref={ref}></canvas></div>;
 }
 
 // ============================================================
-// FORM MOVIMENTO (usato in Nuovo + Modifica)
+// MOTORE CONTABILE — derivazioni dalle scritture
 // ============================================================
-function MovForm({ init, conti, metodi, categorie, onSave, onCancel }) {
-  const [tipo, setTipo] = useState(init?.tipo || "USCITA");
-  const [mese, setMese] = useState(init?.mese || MESI[new Date().getMonth()]);
-  const [conto, setConto] = useState(init?.conto || (conti[0] || ""));
-  const [motivo, setMotivo] = useState(init?.motivo || "");
-  const [metodo, setMetodo] = useState(init?.metodo || "");
-  const [categoria, setCategoria] = useState(init?.categoria || "");
-  const [importo, setImporto] = useState(init?.importo != null ? String(init.importo) : "");
+function useContabilita(scritture, pdc){
+  return useMemo(()=>{
+    // mappa piano dei conti per nome
+    const meta = {};
+    pdc.forEach(c=>{ meta[c.nome?.trim()] = c; });
+    const metaOf = (conto)=> meta[String(conto||"").trim()] || {};
+    const catLiquid = (conto)=> isLiquid((metaOf(conto).categoria)||"");
 
-  const save = () => {
-    const imp = num(importo.replace(",", "."));
-    if (!mese) return alert("Seleziona il mese");
-    if (imp <= 0) return alert("Inserisci un importo valido");
-    onSave({
-      tipo, mese: mese.toLowerCase(), conto: conto.trim(),
-      motivo: motivo.trim(), metodo: metodo.trim(),
-      categoria: categoria.trim(), importo: imp
+    // righe appiattite
+    const righe = [];
+    scritture.forEach(s=>{
+      (s.righe||[]).forEach(r=>{
+        righe.push({ ...r, dare:num(r.dare), avere:num(r.avere), data:s.data, mese:meseOf(s.data), descrizione:s.descrizione, scritturaId:s._id });
+      });
     });
+
+    // saldi per conto (DARE - AVERE)
+    const perConto = {};
+    righe.forEach(r=>{
+      const k=r.conto; if(!perConto[k]) perConto[k]={conto:k, dare:0, avere:0, n:0, meta:metaOf(k)};
+      perConto[k].dare+=r.dare; perConto[k].avere+=r.avere; perConto[k].n++;
+    });
+    Object.values(perConto).forEach(c=> c.saldo = c.dare - c.avere);
+
+    // conti liquidi
+    const contiLiquidi = Object.values(perConto).filter(c=> isLiquid(c.meta.categoria)).map(c=>c.conto);
+
+    // quadratura globale
+    let totDare=0, totAvere=0; righe.forEach(r=>{ totDare+=r.dare; totAvere+=r.avere; });
+
+    return { meta, metaOf, catLiquid, righe, perConto, contiLiquidi, totDare, totAvere };
+  },[scritture,pdc]);
+}
+
+// pill prospetto
+const Pros = ({p}) => <span className="chip" style={{fontSize:10}}>{p||"—"}</span>;
+
+// ============================================================
+// PAGINA: DASHBOARD / DISPONIBILITÀ REALI
+// ============================================================
+function PageDashboard({ scritture, pdc, movimenti, dispTarget, anno }){
+  const C = useContabilita(scritture, pdc);
+
+  // disponibilità per conto liquido: entrate=DARE, uscite=AVERE, delta=saldo
+  const matchTarget = (conto)=>{
+    const keys=Object.keys(dispTarget||{});
+    const k=keys.find(t=> conto.toUpperCase().includes(t.toUpperCase()) || t.toUpperCase().includes(conto.toUpperCase()));
+    return k!=null ? dispTarget[k] : null;
   };
+  const disp = C.contiLiquidi.map(conto=>{
+    const c=C.perConto[conto];
+    const target=matchTarget(conto);
+    const diff = target!=null ? c.saldo-target : null;
+    return { conto, entrate:c.dare, uscite:c.avere, delta:c.saldo, target, diff, warn: diff!=null && Math.abs(diff)>0.01 };
+  });
+  const liquiditaTot = disp.reduce((a,d)=>a+d.delta,0);
+
+  // CONTROLLI: cassa (movimenti) vs giornale (gambe liquide) per mese
+  const controlliMese = useMemo(()=>{
+    const cash={}, gj={};
+    movimenti.forEach(m=>{ const i=mIdxName(m.mese); if(i<0) return; cash[i]=cash[i]||{e:0,u:0}; m.tipo==="ENTRATA"?cash[i].e+=num(m.importo):cash[i].u+=num(m.importo); });
+    C.righe.forEach(r=>{ if(!C.catLiquid(r.conto)||r.mese==null) return; gj[r.mese]=gj[r.mese]||{e:0,u:0}; gj[r.mese].e+=r.dare; gj[r.mese].u+=r.avere; });
+    const mesi=distinct([...Object.keys(cash),...Object.keys(gj)].map(Number)).sort((a,b)=>a-b);
+    return mesi.map(i=>{ const c=cash[i]||{e:0,u:0}, g=gj[i]||{e:0,u:0};
+      const de=c.e-g.e, du=c.u-g.u; return { i, cash:c, gj:g, de, du, warn:Math.abs(de)>0.01||Math.abs(du)>0.01 }; });
+  },[movimenti,C]);
+  const warnings = controlliMese.filter(x=>x.warn).length + disp.filter(d=>d.warn).length;
+
+  // trend mensile dei flussi (conti liquidi): per mese entrate(DARE)/uscite(AVERE)/delta
+  const trend = useMemo(()=>{
+    const E=Array(12).fill(0), U=Array(12).fill(0);
+    C.righe.forEach(r=>{ if(!C.catLiquid(r.conto)||r.mese==null) return; E[r.mese]+=r.dare; U[r.mese]+=r.avere; });
+    const last = Math.max(0, ...C.righe.filter(r=>C.catLiquid(r.conto)&&r.mese!=null).map(r=>r.mese).concat([0]));
+    return { labels:MESI.slice(0,last+1).map(cap), E:E.slice(0,last+1), U:U.slice(0,last+1), D:E.slice(0,last+1).map((e,i)=>e-U[i]) };
+  },[C]);
+
+  const totEntrate = disp.reduce((a,d)=>a+d.entrate,0);
+  const totUscite = disp.reduce((a,d)=>a+d.uscite,0);
+
+  if(!scritture.length) return <EmptyImport anno={anno} />;
 
   return (
-    <div className="card">
-      <div className="form-grid">
-        <div className="field-full">
-          <span className="field-lbl">Tipo</span>
-          <div className="seg">
-            <button type="button" className={tipo==="ENTRATA"?"on entrata":""} onClick={()=>setTipo("ENTRATA")}>Entrata</button>
-            <button type="button" className={tipo==="USCITA"?"on uscita":""} onClick={()=>setTipo("USCITA")}>Uscita</button>
+    <>
+      <div className="page-head"><h2 className="serif">Disponibilità reali</h2>
+        <div className="sub">Saldo in tempo reale dei conti · anno {anno}{warnings?` · ⚠ ${warnings} discrepanze da verificare`:" · tutto quadrato ✓"}</div></div>
+
+      <div className="kpi-grid">
+        {disp.map((d,i)=>(
+          <div key={d.conto} className={"kpi"+(i===0?" accent":"")}>
+            <div className="label">{d.conto} {d.warn && <span title={"differenza vs foglio: "+eur(d.diff)} style={{color:"var(--danger)"}}>⚠</span>}</div>
+            <div className={"value "+(d.delta<0?"neg":"")}>{eur(d.delta)}</div>
+            <div className="hint">{d.target!=null ? (d.warn? `atteso ${eur(d.target)} · Δ ${eur(d.diff)}` : `coincide col foglio ✓`) : `entrate ${eur(d.entrate)} · uscite ${eur(d.uscite)}`}</div>
           </div>
-        </div>
-        <div>
-          <span className="field-lbl">Mese</span>
-          <select value={mese} onChange={e=>setMese(e.target.value)} style={{width:"100%"}}>
-            {MESI.map(m => <option key={m} value={m}>{cap(m)}</option>)}
-          </select>
-        </div>
-        <div>
-          <span className="field-lbl">Importo (€)</span>
-          <input type="text" inputMode="decimal" value={importo} placeholder="0,00"
-            onChange={e=>setImporto(e.target.value)} style={{width:"100%"}} />
-        </div>
-        <div>
-          <span className="field-lbl">Conto</span>
-          <input type="text" list="dl-conti" value={conto} onChange={e=>setConto(e.target.value)} style={{width:"100%"}} />
-          <datalist id="dl-conti">{conti.map(c => <option key={c} value={c} />)}</datalist>
-        </div>
-        <div>
-          <span className="field-lbl">Categoria</span>
-          <input type="text" list="dl-cat" value={categoria} onChange={e=>setCategoria(e.target.value)} style={{width:"100%"}} />
-          <datalist id="dl-cat">{categorie.map(c => <option key={c} value={c} />)}</datalist>
-        </div>
-        <div>
-          <span className="field-lbl">Metodo</span>
-          <input type="text" list="dl-met" value={metodo} onChange={e=>setMetodo(e.target.value)} style={{width:"100%"}} />
-          <datalist id="dl-met">{metodi.map(c => <option key={c} value={c} />)}</datalist>
-        </div>
-        <div>
-          <span className="field-lbl">Motivo / descrizione</span>
-          <input type="text" value={motivo} onChange={e=>setMotivo(e.target.value)} style={{width:"100%"}} />
-        </div>
+        ))}
+        <div className="kpi accent"><div className="label">Liquidità totale</div><div className={"value "+(liquiditaTot<0?"neg":"")}>{eur(liquiditaTot)}</div><div className="hint">somma conti liquidi</div></div>
       </div>
-      <div style={{display:"flex", gap:10, marginTop:18}}>
-        <button className="btn accent" onClick={save}>{init?._id ? "Salva modifiche" : "Aggiungi movimento"}</button>
-        {onCancel && <button className="btn ghost" onClick={onCancel}>Annulla</button>}
-      </div>
-    </div>
-  );
-}
 
-// ============================================================
-// PAGINA: NUOVO
-// ============================================================
-function PageNuovo({ anno, conti, metodi, categorie, onDone }) {
-  const save = async (dati) => {
-    await db.ref(`finanze/${anno}/movimenti`).push({ ...dati, createdAt: new Date().toISOString() });
-    onDone("Movimento aggiunto");
-  };
-  return (
-    <>
-      <div className="page-head"><h2 className="serif">Nuovo movimento</h2>
-        <div className="sub">Aggiungi un'entrata o un'uscita</div></div>
-      <MovForm conti={conti} metodi={metodi} categorie={categorie} onSave={save} />
-    </>
-  );
-}
-
-// ============================================================
-// PAGINA: MOVIMENTI
-// ============================================================
-function PageMovimenti({ anno, movimenti, conti, metodi, categorie, onToast }) {
-  const [fMese, setFMese] = useState("");
-  const [fTipo, setFTipo] = useState("");
-  const [fConto, setFConto] = useState("");
-  const [fCat, setFCat] = useState("");
-  const [q, setQ] = useState("");
-  const [editing, setEditing] = useState(null);
-
-  const filtered = useMemo(() => {
-    return movimenti.filter(m =>
-      (!fMese || m.mese === fMese) &&
-      (!fTipo || m.tipo === fTipo) &&
-      (!fConto || m.conto === fConto) &&
-      (!fCat || m.categoria === fCat) &&
-      (!q || (m.motivo || "").toLowerCase().includes(q.toLowerCase()))
-    ).sort((a,b) => (mIdx(b.mese) - mIdx(a.mese)) || ((b.createdAt||"") < (a.createdAt||"") ? -1 : 1));
-  }, [movimenti, fMese, fTipo, fConto, fCat, q]);
-
-  const tot = useMemo(() => {
-    let e=0, u=0;
-    filtered.forEach(m => m.tipo === "ENTRATA" ? e += num(m.importo) : u += num(m.importo));
-    return { e, u, saldo: e - u };
-  }, [filtered]);
-
-  const del = async (m) => {
-    if (!window.confirm("Eliminare questo movimento?")) return;
-    await db.ref(`finanze/${anno}/movimenti/${m._id}`).remove();
-    onToast("Movimento eliminato");
-  };
-  const saveEdit = async (dati) => {
-    await db.ref(`finanze/${anno}/movimenti/${editing._id}`).update(dati);
-    setEditing(null); onToast("Movimento aggiornato");
-  };
-
-  return (
-    <>
-      <div className="page-head"><h2 className="serif">Movimenti</h2>
-        <div className="sub">{filtered.length} movimenti · entrate {eur(tot.e)} · uscite {eur(tot.u)} · saldo {eur(tot.saldo)}</div></div>
-
-      {editing && (
-        <div style={{marginBottom:20}}>
-          <div className="field-lbl" style={{marginBottom:8}}>Modifica movimento</div>
-          <MovForm init={editing} conti={conti} metodi={metodi} categorie={categorie}
-            onSave={saveEdit} onCancel={() => setEditing(null)} />
+      {warnings>0 && (
+        <div className="card" style={{marginTop:20, borderLeft:"3px solid var(--danger)"}}>
+          <div className="card-title" style={{color:"var(--danger)"}}>⚠ Controlli e quadrature</div>
+          {disp.filter(d=>d.warn).map(d=>(
+            <p key={d.conto} style={{fontSize:13,margin:"4px 0"}}>Conto <strong>{d.conto}</strong>: saldo calcolato {eur(d.delta)} vs foglio {eur(d.target)} → differenza <strong style={{color:"var(--danger)"}}>{eur(d.diff)}</strong>.</p>
+          ))}
+          {controlliMese.filter(x=>x.warn).map(x=>(
+            <p key={x.i} style={{fontSize:13,margin:"4px 0"}}><strong>{cap(MESI[x.i])}</strong>: cassa (entrate/uscite {eur(x.cash.e)}/{eur(x.cash.u)}) ≠ giornale ({eur(x.gj.e)}/{eur(x.gj.u)})
+            {Math.abs(x.de)>0.01?` · Δ entrate ${eur(x.de)}`:""}{Math.abs(x.du)>0.01?` · Δ uscite ${eur(x.du)}`:""}.</p>
+          ))}
         </div>
       )}
 
-      <div className="filters">
-        <select value={fMese} onChange={e=>setFMese(e.target.value)}>
-          <option value="">Tutti i mesi</option>
-          {MESI.map(m => <option key={m} value={m}>{cap(m)}</option>)}
-        </select>
-        <select value={fTipo} onChange={e=>setFTipo(e.target.value)}>
-          <option value="">Entrate + Uscite</option>
-          <option value="ENTRATA">Solo entrate</option>
-          <option value="USCITA">Solo uscite</option>
-        </select>
-        <select value={fConto} onChange={e=>setFConto(e.target.value)}>
-          <option value="">Tutti i conti</option>
-          {conti.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <select value={fCat} onChange={e=>setFCat(e.target.value)}>
-          <option value="">Tutte le categorie</option>
-          {categorie.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <input type="text" placeholder="Cerca nel motivo…" value={q} onChange={e=>setQ(e.target.value)} />
-        {(fMese||fTipo||fConto||fCat||q) &&
-          <button className="btn ghost sm" onClick={()=>{setFMese("");setFTipo("");setFConto("");setFCat("");setQ("");}}>Reset</button>}
-      </div>
-
-      <div className="card flat" style={{padding:0, overflowX:"auto"}}>
-        <table className="tbl">
-          <thead><tr>
-            <th>Mese</th><th>Tipo</th><th>Conto</th><th>Motivo</th><th>Categoria</th><th>Metodo</th>
-            <th className="num">Importo</th><th></th>
-          </tr></thead>
-          <tbody>
-            {filtered.length === 0 && <tr><td colSpan="8" style={{textAlign:"center",color:"var(--ink-3)",padding:"28px"}}>Nessun movimento</td></tr>}
-            {filtered.map(m => (
-              <tr key={m._id}>
-                <td>{cap(m.mese)}</td>
-                <td><span className={"pill " + (m.tipo==="ENTRATA"?"entrata":"uscita")}>{m.tipo==="ENTRATA"?"Entrata":"Uscita"}</span></td>
-                <td>{m.conto}</td>
-                <td>{m.motivo}</td>
-                <td>{m.categoria}</td>
-                <td style={{color:"var(--ink-3)"}}>{m.metodo}</td>
-                <td className={"num " + (m.tipo==="ENTRATA"?"pos":"neg")}>{m.tipo==="ENTRATA"?"+":"−"}{eur(m.importo).replace("−","")}</td>
-                <td style={{whiteSpace:"nowrap"}}>
-                  <button className="btn ghost sm" onClick={()=>{setEditing(m); window.scrollTo(0,0);}}>✎</button>{" "}
-                  <button className="btn danger sm" onClick={()=>del(m)}>✕</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </>
-  );
-}
-
-// ============================================================
-// PAGINA: DASHBOARD
-// ============================================================
-function PageDashboard({ movimenti, saldi, conti, anno }) {
-  const [fMese, setFMese] = useState("");
-
-  const inScope = useMemo(() => fMese ? movimenti.filter(m => m.mese === fMese) : movimenti, [movimenti, fMese]);
-
-  const k = useMemo(() => {
-    let e=0,u=0; inScope.forEach(m => m.tipo==="ENTRATA"?e+=num(m.importo):u+=num(m.importo));
-    return { e, u, saldo: e-u };
-  }, [inScope]);
-
-  // saldo liquidità per conto (sempre su tutto l'anno)
-  const saldiConto = useMemo(() => {
-    const sIni = {}; saldi.forEach(s => sIni[s.conto] = num(s.importo));
-    const map = {}; conti.forEach(c => map[c] = sIni[c] || 0);
-    movimenti.forEach(m => {
-      if (map[m.conto] === undefined) map[m.conto] = sIni[m.conto] || 0;
-      map[m.conto] += (m.tipo==="ENTRATA"?1:-1) * num(m.importo);
-    });
-    return map;
-  }, [movimenti, saldi, conti]);
-  const liquiditaTot = Object.values(saldiConto).reduce((a,b)=>a+b,0);
-
-  // andamento mensile
-  const perMese = useMemo(() => {
-    const E = Array(12).fill(0), U = Array(12).fill(0);
-    movimenti.forEach(m => { const i=mIdx(m.mese); if(i<0) return; m.tipo==="ENTRATA"?E[i]+=num(m.importo):U[i]+=num(m.importo); });
-    const lastIdx = Math.max(0, ...movimenti.map(m=>mIdx(m.mese)).filter(i=>i>=0).concat([0]));
-    const labels = MESI.slice(0, lastIdx+1).map(cap);
-    return { labels, E: E.slice(0,lastIdx+1), U: U.slice(0,lastIdx+1) };
-  }, [movimenti]);
-
-  // spese per categoria
-  const perCat = useMemo(() => {
-    const map = {};
-    inScope.filter(m=>m.tipo==="USCITA").forEach(m => map[m.categoria||"(senza)"] = (map[m.categoria||"(senza)"]||0)+num(m.importo));
-    return Object.entries(map).sort((a,b)=>b[1]-a[1]);
-  }, [inScope]);
-  const topCat = perCat.slice(0, 12);
-
-  return (
-    <>
-      <div className="page-head">
-        <h2 className="serif">Dashboard</h2>
-        <div className="sub">{fMese ? cap(fMese)+" "+anno : "Anno "+anno} · {inScope.length} movimenti</div>
-      </div>
-
-      <div className="filters">
-        <select value={fMese} onChange={e=>setFMese(e.target.value)}>
-          <option value="">Tutto l'anno</option>
-          {MESI.map(m => <option key={m} value={m}>{cap(m)}</option>)}
-        </select>
-      </div>
-
-      <div className="kpi-grid">
-        <div className="kpi"><div className="label">Entrate</div><div className="value pos" style={{color:"var(--accent)"}}>{eur(k.e)}</div></div>
-        <div className="kpi"><div className="label">Uscite</div><div className="value neg">{eur(k.u)}</div></div>
-        <div className="kpi"><div className="label">Saldo del periodo</div><div className={"value " + (k.saldo<0?"neg":"")}>{eur(k.saldo)}</div></div>
-        <div className="kpi accent"><div className="label">Liquidità totale</div><div className="value">{eur(liquiditaTot)}</div><div className="hint">su tutti i conti</div></div>
-      </div>
-
       <div className="twocol" style={{marginTop:20}}>
         <div className="card">
-          <div className="card-title">Andamento mensile</div>
+          <div className="card-title">Flussi di cassa mensili</div>
           <ChartBox type="bar"
-            data={{ labels: perMese.labels, datasets: [
-              { label:"Entrate", data: perMese.E, backgroundColor:"#2d5e3e", borderRadius:4 },
-              { label:"Uscite", data: perMese.U, backgroundColor:"#b54343", borderRadius:4 },
+            data={{ labels:trend.labels, datasets:[
+              {label:"Entrate", data:trend.E, backgroundColor:"#2d5e3e", borderRadius:4},
+              {label:"Uscite", data:trend.U, backgroundColor:"#b54343", borderRadius:4},
             ]}}
-            options={{ responsive:true, maintainAspectRatio:false,
-              plugins:{ legend:{ position:"bottom" } },
-              scales:{ y:{ ticks:{ callback:v=>"€"+v } } } }} />
+            options={{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom"}},scales:{y:{ticks:{callback:v=>"€"+v}}}}} />
         </div>
         <div className="card">
-          <div className="card-title">Spese per categoria{fMese?" · "+cap(fMese):""}</div>
-          {topCat.length === 0
-            ? <div className="empty-state" style={{padding:"40px 0"}}>Nessuna uscita</div>
-            : <ChartBox type="doughnut" className="sm"
-                data={{ labels: topCat.map(c=>c[0]), datasets:[{ data: topCat.map(c=>c[1]), backgroundColor: PALETTE, borderWidth:1, borderColor:"#fff" }] }}
-                options={{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:"right", labels:{ boxWidth:12, font:{size:11} } } } }} />}
+          <div className="card-title">Delta mensile (variazione liquidità)</div>
+          <ChartBox type="line" className="sm"
+            data={{ labels:trend.labels, datasets:[{label:"Delta", data:trend.D, borderColor:"#b8954b", backgroundColor:"rgba(184,149,75,.15)", fill:true, tension:.3}]}}
+            options={{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{ticks:{callback:v=>"€"+v}}}}} />
         </div>
-      </div>
-
-      <div className="twocol" style={{marginTop:20}}>
-        <div className="card">
-          <div className="card-title">Saldo per conto</div>
-          <table className="tbl">
-            <thead><tr><th>Conto</th><th className="num">Saldo</th></tr></thead>
-            <tbody>
-              {Object.entries(saldiConto).map(([c,v]) => (
-                <tr key={c}><td>{c}</td><td className={"num " + (v<0?"neg":"")}>{eur(v)}</td></tr>
-              ))}
-              <tr style={{fontWeight:600}}><td>Totale</td><td className="num">{eur(liquiditaTot)}</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <div className="card">
-          <div className="card-title">Top categorie di spesa</div>
-          <table className="tbl">
-            <thead><tr><th>Categoria</th><th className="num">Importo</th><th className="num">%</th></tr></thead>
-            <tbody>
-              {topCat.map(([c,v]) => (
-                <tr key={c}><td>{c}</td><td className="num neg">{eur(v)}</td>
-                  <td className="num" style={{color:"var(--ink-3)"}}>{k.u>0?Math.round(v/k.u*100):0}%</td></tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </>
-  );
-}
-
-// ============================================================
-// PAGINA: BUDGET
-// ============================================================
-function PageBudget({ anno, movimenti, budget, categorie, onToast }) {
-  const [fMese, setFMese] = useState(MESI[new Date().getMonth()]);
-  const [newCat, setNewCat] = useState("");
-  const [newImp, setNewImp] = useState("");
-
-  const speseMese = useMemo(() => {
-    const map = {};
-    movimenti.filter(m => m.tipo==="USCITA" && m.mese===fMese)
-      .forEach(m => map[m.categoria] = (map[m.categoria]||0)+num(m.importo));
-    return map;
-  }, [movimenti, fMese]);
-
-  const rows = useMemo(() => budget.map(b => {
-    const spent = speseMese[b.categoria] || 0;
-    const cap_ = num(b.importo);
-    const pct = cap_>0 ? spent/cap_*100 : 0;
-    return { ...b, spent, cap_, pct };
-  }).sort((a,b)=>b.pct-a.pct), [budget, speseMese]);
-
-  const totCap = rows.reduce((a,r)=>a+r.cap_,0);
-  const totSpent = rows.reduce((a,r)=>a+r.spent,0);
-
-  const addBudget = async () => {
-    if (!newCat.trim()) return alert("Inserisci una categoria");
-    const imp = num(newImp.replace(",","."));
-    if (imp <= 0) return alert("Inserisci un tetto valido");
-    await db.ref(`finanze/${anno}/budget/${keyOf(newCat)}`).set({ categoria: newCat.trim(), importo: imp });
-    setNewCat(""); setNewImp(""); onToast("Budget salvato");
-  };
-  const delBudget = async (b) => {
-    if (!window.confirm(`Rimuovere il budget per "${b.categoria}"?`)) return;
-    await db.ref(`finanze/${anno}/budget/${b._id}`).remove(); onToast("Budget rimosso");
-  };
-  const editImp = async (b) => {
-    const v = prompt(`Tetto mensile per "${b.categoria}" (€):`, b.importo);
-    if (v == null) return;
-    await db.ref(`finanze/${anno}/budget/${b._id}/importo`).set(num(String(v).replace(",","."))); onToast("Aggiornato");
-  };
-
-  const barClass = (p) => p > 100 ? "over" : p > 80 ? "warn" : "ok";
-
-  return (
-    <>
-      <div className="page-head"><h2 className="serif">Budget mensile</h2>
-        <div className="sub">Tetto di spesa per categoria · confronto col mese selezionato</div></div>
-
-      <div className="filters">
-        <select value={fMese} onChange={e=>setFMese(e.target.value)}>
-          {MESI.map(m => <option key={m} value={m}>{cap(m)}</option>)}
-        </select>
-      </div>
-
-      <div className="kpi-grid" style={{gridTemplateColumns:"repeat(3,1fr)"}}>
-        <div className="kpi"><div className="label">Budget totale</div><div className="value">{eur(totCap)}</div></div>
-        <div className="kpi"><div className="label">Speso ({cap(fMese)})</div><div className={"value " + (totSpent>totCap?"neg":"")}>{eur(totSpent)}</div></div>
-        <div className="kpi"><div className="label">Residuo</div><div className={"value " + (totCap-totSpent<0?"neg":"")}>{eur(totCap-totSpent)}</div></div>
       </div>
 
       <div className="card" style={{marginTop:20}}>
-        <div className="card-title">Aggiungi / aggiorna un tetto</div>
-        <div className="filters" style={{marginBottom:0}}>
-          <input type="text" list="dl-cat-b" placeholder="Categoria" value={newCat} onChange={e=>setNewCat(e.target.value)} />
-          <datalist id="dl-cat-b">{categorie.map(c => <option key={c} value={c} />)}</datalist>
-          <input type="text" inputMode="decimal" placeholder="Tetto € / mese" value={newImp} onChange={e=>setNewImp(e.target.value)} style={{maxWidth:140}} />
-          <button className="btn accent sm" onClick={addBudget}>Salva</button>
-        </div>
-      </div>
-
-      <div style={{marginTop:20, display:"flex", flexDirection:"column", gap:12}}>
-        {rows.length === 0 && <div className="empty-state">Nessun budget impostato. Aggiungine uno qui sopra.</div>}
-        {rows.map(r => (
-          <div key={r._id} className="card flat">
-            <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:8, gap:10, flexWrap:"wrap"}}>
-              <strong>{r.categoria}</strong>
-              <span className="mono" style={{fontSize:12.5, color: r.pct>100?"var(--danger)":"var(--ink-2)"}}>
-                {eur(r.spent)} / {eur(r.cap_)} · {Math.round(r.pct)}%
-              </span>
-            </div>
-            <div className="bar-track"><div className={"bar-fill " + barClass(r.pct)} style={{width: Math.min(100, r.pct) + "%"}}></div></div>
-            <div style={{display:"flex", justifyContent:"space-between", marginTop:8}}>
-              <span style={{fontSize:12, color: r.cap_-r.spent<0?"var(--danger)":"var(--ink-3)"}}>
-                {r.cap_-r.spent<0 ? "Sforato di "+eur(r.spent-r.cap_) : "Residuo "+eur(r.cap_-r.spent)}
-              </span>
-              <span style={{whiteSpace:"nowrap"}}>
-                <button className="btn ghost sm" onClick={()=>editImp(r)}>✎</button>{" "}
-                <button className="btn danger sm" onClick={()=>delBudget(r)}>✕</button>
-              </span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </>
-  );
-}
-
-// ============================================================
-// PAGINA: CONTI
-// ============================================================
-function PageConti({ anno, movimenti, saldi, conti, onToast }) {
-  const [nome, setNome] = useState("");
-  const sIni = {}; saldi.forEach(s => sIni[s.conto] = num(s.importo));
-
-  const movPerConto = {};
-  movimenti.forEach(m => { movPerConto[m.conto] = (movPerConto[m.conto]||0) + (m.tipo==="ENTRATA"?1:-1)*num(m.importo); });
-
-  const setSaldoIniziale = async (c) => {
-    const v = prompt(`Saldo iniziale del conto "${c}" all'inizio dell'anno (€):`, sIni[c] || 0);
-    if (v == null) return;
-    await db.ref(`finanze/${anno}/saldiIniziali/${keyOf(c)}`).set({ conto: c, importo: num(String(v).replace(",",".")) });
-    onToast("Saldo iniziale aggiornato");
-  };
-  const addConto = async () => {
-    if (!nome.trim()) return;
-    await db.ref(`finanze/${anno}/saldiIniziali/${keyOf(nome)}`).set({ conto: nome.trim(), importo: 0 });
-    setNome(""); onToast("Conto aggiunto");
-  };
-
-  return (
-    <>
-      <div className="page-head"><h2 className="serif">Conti</h2>
-        <div className="sub">Saldo iniziale + movimenti = saldo attuale</div></div>
-
-      <div className="card" style={{marginBottom:20}}>
-        <div className="filters" style={{marginBottom:0}}>
-          <input type="text" placeholder="Nuovo conto (es. Revolut)" value={nome} onChange={e=>setNome(e.target.value)} />
-          <button className="btn accent sm" onClick={addConto}>Aggiungi conto</button>
-        </div>
-      </div>
-
-      <div className="card flat" style={{padding:0, overflowX:"auto"}}>
-        <table className="tbl">
-          <thead><tr><th>Conto</th><th className="num">Saldo iniziale</th><th className="num">Variazione</th><th className="num">Saldo attuale</th><th></th></tr></thead>
+        <div className="card-title">Trend mensile per conto</div>
+        <div style={{overflowX:"auto"}}><table className="tbl">
+          <thead><tr><th>Mese</th><th>Tipo</th>{C.contiLiquidi.map(c=><th key={c} className="num">{c}</th>)}<th className="num">Totale</th></tr></thead>
           <tbody>
-            {conti.map(c => {
-              const ini = sIni[c] || 0, varz = movPerConto[c] || 0;
+            {trend.labels.map((lab,mi)=>{
+              const row=(fn)=> C.contiLiquidi.map(c=>{ let v=0; C.righe.forEach(r=>{ if(r.conto===c&&r.mese===mi) v+=fn(r); }); return v; });
+              const ent=row(r=>r.dare), usc=row(r=>r.avere);
+              const del=ent.map((e,i)=>e-usc[i]);
               return (
-                <tr key={c}>
-                  <td><strong>{c}</strong></td>
-                  <td className="num">{eur(ini)}</td>
-                  <td className={"num " + (varz<0?"neg":"pos")}>{varz>=0?"+":"−"}{eur(varz).replace("−","")}</td>
-                  <td className={"num " + (ini+varz<0?"neg":"")}><strong>{eur(ini+varz)}</strong></td>
-                  <td><button className="btn ghost sm" onClick={()=>setSaldoIniziale(c)}>Saldo iniziale ✎</button></td>
-                </tr>
+                <React.Fragment key={mi}>
+                  <tr style={{background:"var(--panel-2)"}}><td rowSpan="3"><strong>{lab}</strong></td><td>Entrate</td>{ent.map((v,i)=><td key={i} className="num pos">{v?eur(v):"—"}</td>)}<td className="num pos">{eur(ent.reduce((a,b)=>a+b,0))}</td></tr>
+                  <tr><td>Uscite</td>{usc.map((v,i)=><td key={i} className="num neg">{v?eur(v):"—"}</td>)}<td className="num neg">{eur(usc.reduce((a,b)=>a+b,0))}</td></tr>
+                  <tr style={{borderBottom:"2px solid var(--rule-2)"}}><td>Delta</td>{del.map((v,i)=><td key={i} className={"num "+(v<0?"neg":"")}>{eur(v)}</td>)}<td className={"num "+(del.reduce((a,b)=>a+b,0)<0?"neg":"")}><strong>{eur(del.reduce((a,b)=>a+b,0))}</strong></td></tr>
+                </React.Fragment>
               );
             })}
           </tbody>
-        </table>
+        </table></div>
       </div>
     </>
   );
 }
 
 // ============================================================
-// PAGINA: CATEGORIE
+// PAGINA: LIBRO GIORNALE (cronologico + mastrini)
 // ============================================================
-function PageCategorie({ anno, movimenti, onToast }) {
-  const stats = useMemo(() => {
-    const map = {};
-    movimenti.forEach(m => {
-      const c = m.categoria || "(senza categoria)";
-      if (!map[c]) map[c] = { categoria: c, n: 0, entrate: 0, uscite: 0 };
-      map[c].n++;
-      m.tipo==="ENTRATA" ? map[c].entrate += num(m.importo) : map[c].uscite += num(m.importo);
-    });
-    return Object.values(map).sort((a,b)=>(b.entrate+b.uscite)-(a.entrate+a.uscite));
-  }, [movimenti]);
+function PageGiornale({ scritture, pdc, anno, onToast }){
+  const C = useContabilita(scritture, pdc);
+  const [tab,setTab]=useState("cron");
+  const [fMese,setFMese]=useState("");
+  const [mastro,setMastro]=useState("");
+  const delScrittura = async (s)=>{
+    if(!window.confirm(`Eliminare la scrittura "${s.descrizione||fmtData(s.data)}"?`)) return;
+    await db.ref(`finanze/${anno}/scritture/${s._id}`).remove();
+    onToast && onToast("Scrittura eliminata");
+  };
 
-  const rename = async (cat) => {
-    const nuovo = prompt(`Rinomina la categoria "${cat}" in:`, cat);
-    if (!nuovo || nuovo === cat) return;
-    const updates = {};
-    movimenti.filter(m => (m.categoria||"") === cat).forEach(m => { updates[`${m._id}/categoria`] = nuovo.trim(); });
-    await db.ref(`finanze/${anno}/movimenti`).update(updates);
-    onToast(`Rinominata in "${nuovo.trim()}" (${Object.keys(updates).length} movimenti)`);
+  const ordinate = useMemo(()=> [...scritture].sort((a,b)=> (a.data||"").localeCompare(b.data||"")), [scritture]);
+  const view = fMese!=="" ? ordinate.filter(s=>meseOf(s.data)===+fMese) : ordinate;
+
+  const conti = useMemo(()=> Object.keys(C.perConto).sort(), [C]);
+
+  // mastrino: righe del conto selezionato con saldo progressivo
+  const mastrinoRows = useMemo(()=>{
+    if(!mastro) return [];
+    const rs = C.righe.filter(r=>r.conto===mastro).sort((a,b)=>(a.data||"").localeCompare(b.data||""));
+    let sal=0; return rs.map(r=>{ sal += r.dare - r.avere; return {...r, saldo:sal}; });
+  },[C,mastro]);
+
+  return (
+    <>
+      <div className="page-head"><h2 className="serif">Libro giornale</h2>
+        <div className="sub">{scritture.length} scritture · DARE {eur(C.totDare)} · AVERE {eur(C.totAvere)} · {Math.abs(C.totDare-C.totAvere)<0.01? "quadrato ✓":"sbilancio "+eur(C.totDare-C.totAvere)}</div></div>
+
+      <div className="seg" style={{marginBottom:16}}>
+        <button className={tab==="cron"?"on entrata":""} onClick={()=>setTab("cron")}>Cronologico</button>
+        <button className={tab==="mastro"?"on entrata":""} onClick={()=>setTab("mastro")}>Mastrini</button>
+      </div>
+
+      {tab==="cron" && <>
+        <div className="filters">
+          <select value={fMese} onChange={e=>setFMese(e.target.value)}>
+            <option value="">Tutti i mesi</option>
+            {MESI.map((m,i)=><option key={m} value={i}>{cap(m)}</option>)}
+          </select>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          {view.map(s=>{
+            const td=(s.righe||[]).reduce((a,r)=>a+num(r.dare),0), ta=(s.righe||[]).reduce((a,r)=>a+num(r.avere),0);
+            const quad=Math.abs(td-ta)<0.01;
+            return (
+              <div key={s._id} className="card flat">
+                <div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap",marginBottom:8,alignItems:"center"}}>
+                  <strong>{fmtData(s.data)} · {s.descrizione||"(senza descrizione)"}</strong>
+                  <span style={{display:"flex",gap:8,alignItems:"center"}}>
+                    <span className="chip" style={{color:quad?"var(--accent)":"var(--danger)"}}>{quad?"quadrata":"sbilanciata"}</span>
+                    <button className="btn danger sm" onClick={()=>delScrittura(s)}>✕</button>
+                  </span>
+                </div>
+                <table className="tbl"><thead><tr><th>Conto</th><th>Categoria</th><th className="num">Dare</th><th className="num">Avere</th></tr></thead>
+                  <tbody>{(s.righe||[]).map((r,i)=>(
+                    <tr key={i}><td>{r.conto}</td><td style={{color:"var(--ink-3)"}}>{r.categoria}</td>
+                      <td className="num">{num(r.dare)?eur(r.dare):""}</td><td className="num">{num(r.avere)?eur(r.avere):""}</td></tr>
+                  ))}
+                  <tr style={{fontWeight:600}}><td colSpan="2">Totale</td><td className="num">{eur(td)}</td><td className="num">{eur(ta)}</td></tr>
+                  </tbody></table>
+              </div>
+            );
+          })}
+          {!view.length && <div className="empty-state">Nessuna scrittura</div>}
+        </div>
+      </>}
+
+      {tab==="mastro" && <>
+        <div className="filters">
+          <select value={mastro} onChange={e=>setMastro(e.target.value)}>
+            <option value="">— scegli un conto —</option>
+            {conti.map(c=><option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        {mastro ? (
+          <div className="card flat" style={{padding:0,overflowX:"auto"}}>
+            <table className="tbl"><thead><tr><th>Data</th><th>Descrizione</th><th className="num">Dare</th><th className="num">Avere</th><th className="num">Saldo</th></tr></thead>
+              <tbody>{mastrinoRows.map((r,i)=>(
+                <tr key={i}><td>{fmtData(r.data)}</td><td>{r.descrizione}</td>
+                  <td className="num">{r.dare?eur(r.dare):""}</td><td className="num">{r.avere?eur(r.avere):""}</td>
+                  <td className={"num "+(r.saldo<0?"neg":"")}><strong>{eur(r.saldo)}</strong></td></tr>
+              ))}</tbody></table>
+          </div>
+        ) : <div className="empty-state">Seleziona un conto per vedere il mastrino con saldo progressivo.</div>}
+      </>}
+    </>
+  );
+}
+
+// ============================================================
+// PAGINA: PIVOT CONTI (saldi raggruppati per categoria/prospetto)
+// ============================================================
+function PagePivotConti({ scritture, pdc }){
+  const C = useContabilita(scritture, pdc);
+  const conti = Object.values(C.perConto);
+
+  // raggruppa per PROSPETTO poi CATEGORIA
+  const gruppi = useMemo(()=>{
+    const g={};
+    conti.forEach(c=>{
+      const pros=c.meta.prospetto||"—", cat=c.meta.categoria||"(senza categoria)";
+      g[pros]=g[pros]||{}; g[pros][cat]=g[pros][cat]||[];
+      g[pros][cat].push(c);
+    });
+    return g;
+  },[C]);
+
+  return (
+    <>
+      <div className="page-head"><h2 className="serif">Pivot conti</h2>
+        <div className="sub">Saldi per conto raggruppati per prospetto e categoria</div></div>
+      {Object.keys(gruppi).sort().map(pros=>(
+        <div key={pros} className="card" style={{marginBottom:18}}>
+          <div className="card-title">{pros==="SP"?"Stato Patrimoniale (SP)":pros==="CE"?"Conto Economico (CE)":pros}</div>
+          {Object.keys(gruppi[pros]).sort().map(cat=>{
+            const list=gruppi[pros][cat].sort((a,b)=>Math.abs(b.saldo)-Math.abs(a.saldo));
+            const sub=list.reduce((a,c)=>a+c.saldo,0);
+            return (
+              <div key={cat} style={{marginBottom:10}}>
+                <div className="field-lbl" style={{marginTop:8}}>{cat} · <span style={{color:"var(--ink-2)"}}>{eur(sub)}</span></div>
+                <table className="tbl"><thead><tr><th>Conto</th><th className="num">Dare</th><th className="num">Avere</th><th className="num">Saldo</th></tr></thead>
+                  <tbody>{list.map(c=>(
+                    <tr key={c.conto}><td>{c.conto}</td><td className="num">{eur(c.dare)}</td><td className="num">{eur(c.avere)}</td>
+                      <td className={"num "+(c.saldo<0?"neg":"")}><strong>{eur(c.saldo)}</strong></td></tr>
+                  ))}</tbody></table>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+      {!conti.length && <div className="empty-state">Nessun dato</div>}
+    </>
+  );
+}
+
+// ============================================================
+// PAGINA: BILANCIO DI VERIFICA (trial balance)
+// ============================================================
+function PageBdV({ scritture, pdc }){
+  const C = useContabilita(scritture, pdc);
+  const [tab,setTab]=useState("bdv");
+  const conti = Object.values(C.perConto).sort((a,b)=>a.conto.localeCompare(b.conto));
+  const totD = conti.reduce((a,c)=>a+c.dare,0), totA = conti.reduce((a,c)=>a+c.avere,0);
+  const quad = Math.abs(totD-totA)<0.01;
+
+  // CE: conti prospetto CE. Ricavi (ecc. AVERE) = avere-dare; Costi (ecc. DARE) = dare-avere
+  const ce = conti.filter(c=>/CE/i.test(c.meta.prospetto||""));
+  const ricavi = ce.filter(c=>/AVERE/i.test(c.meta.eccedenza||"")||(c.avere-c.dare)>0).map(c=>({nome:c.conto,val:c.avere-c.dare})).filter(x=>Math.abs(x.val)>0.005).sort((a,b)=>b.val-a.val);
+  const costi = ce.filter(c=>/DARE/i.test(c.meta.eccedenza||"")||(c.dare-c.avere)>0).map(c=>({nome:c.conto,val:c.dare-c.avere})).filter(x=>Math.abs(x.val)>0.005).sort((a,b)=>b.val-a.val);
+  const totRic=ricavi.reduce((a,x)=>a+x.val,0), totCos=costi.reduce((a,x)=>a+x.val,0);
+  const risultato=totRic-totCos;
+
+  // SP: conti prospetto SP. Attivo (saldo>0), Passivo+PN (saldo<0 → avere-dare)
+  const sp = conti.filter(c=>/SP/i.test(c.meta.prospetto||""));
+  const attivo = sp.filter(c=>c.saldo>0.005).map(c=>({nome:c.conto,cat:c.meta.categoria,val:c.saldo})).sort((a,b)=>b.val-a.val);
+  const passivo = sp.filter(c=>c.saldo<-0.005).map(c=>({nome:c.conto,cat:c.meta.categoria,val:-c.saldo})).sort((a,b)=>b.val-a.val);
+  const totAtt=attivo.reduce((a,x)=>a+x.val,0), totPas=passivo.reduce((a,x)=>a+x.val,0);
+
+  return (
+    <>
+      <div className="page-head"><h2 className="serif">Bilancio di verifica</h2>
+        <div className="sub">{quad?"quadrato ✓":"NON quadra: Δ "+eur(totD-totA)} · con Conto Economico e Stato Patrimoniale</div></div>
+
+      <div className="seg" style={{marginBottom:16}}>
+        <button className={tab==="bdv"?"on entrata":""} onClick={()=>setTab("bdv")}>Verifica</button>
+        <button className={tab==="ce"?"on entrata":""} onClick={()=>setTab("ce")}>Conto economico</button>
+        <button className={tab==="sp"?"on entrata":""} onClick={()=>setTab("sp")}>Stato patrimoniale</button>
+      </div>
+
+      {tab==="bdv" && (
+        <div className="card flat" style={{padding:0,overflowX:"auto"}}>
+          <table className="tbl"><thead><tr><th>Conto</th><th>Prospetto</th><th>Categoria</th><th className="num">Somma di Dare</th><th className="num">Somma di Avere</th></tr></thead>
+            <tbody>
+              {conti.map(c=>(
+                <tr key={c.conto}><td><strong>{c.conto}</strong></td><td><Pros p={c.meta.prospetto}/></td><td style={{color:"var(--ink-3)"}}>{c.meta.categoria||"—"}</td>
+                  <td className="num">{c.dare?eur(c.dare):""}</td><td className="num">{c.avere?eur(c.avere):""}</td></tr>
+              ))}
+              <tr style={{fontWeight:700,background:"var(--panel-2)"}}><td colSpan="3">TOTALE</td><td className="num">{eur(totD)}</td><td className="num">{eur(totA)}</td></tr>
+            </tbody></table>
+        </div>
+      )}
+
+      {tab==="ce" && (
+        <div className="card">
+          <div className="card-title">Conto economico</div>
+          <table className="tbl"><tbody>
+            <tr><td colSpan="2" className="field-lbl">Ricavi</td></tr>
+            {ricavi.map(x=><tr key={x.nome}><td style={{paddingLeft:16}}>{x.nome}</td><td className="num pos">{eur(x.val)}</td></tr>)}
+            <tr style={{fontWeight:600}}><td>Totale ricavi</td><td className="num pos">{eur(totRic)}</td></tr>
+            <tr><td colSpan="2" className="field-lbl" style={{paddingTop:10}}>Costi</td></tr>
+            {costi.map(x=><tr key={x.nome}><td style={{paddingLeft:16}}>{x.nome}</td><td className="num neg">{eur(x.val)}</td></tr>)}
+            <tr style={{fontWeight:600}}><td>Totale costi</td><td className="num neg">{eur(totCos)}</td></tr>
+            <tr style={{fontWeight:700,borderTop:"2px solid var(--rule-2)",background:"var(--panel-2)"}}>
+              <td>Risultato d'esercizio</td><td className={"num "+(risultato<0?"neg":"pos")}>{eur(risultato)} {risultato<0?"(perdita)":"(utile)"}</td></tr>
+          </tbody></table>
+        </div>
+      )}
+
+      {tab==="sp" && (
+        <div className="twocol">
+          <div className="card">
+            <div className="card-title">Attivo</div>
+            <table className="tbl"><tbody>
+              {attivo.map(x=><tr key={x.nome}><td>{x.nome}<div style={{fontSize:10.5,color:"var(--ink-3)"}}>{x.cat}</div></td><td className="num">{eur(x.val)}</td></tr>)}
+              <tr style={{fontWeight:700,background:"var(--panel-2)"}}><td>Totale attivo</td><td className="num">{eur(totAtt)}</td></tr>
+            </tbody></table>
+          </div>
+          <div className="card">
+            <div className="card-title">Passivo e Patrimonio netto</div>
+            <table className="tbl"><tbody>
+              {passivo.map(x=><tr key={x.nome}><td>{x.nome}<div style={{fontSize:10.5,color:"var(--ink-3)"}}>{x.cat}</div></td><td className="num">{eur(x.val)}</td></tr>)}
+              <tr style={{fontWeight:700,background:"var(--panel-2)"}}><td>Totale passivo + PN</td><td className="num">{eur(totPas)}</td></tr>
+              <tr><td style={{color:risultato>=0?"var(--accent)":"var(--danger)"}}>Risultato d'esercizio (da CE)</td><td className={"num "+(risultato<0?"neg":"pos")}>{eur(risultato)}</td></tr>
+              <tr style={{fontWeight:700,borderTop:"2px solid var(--rule-2)"}}><td>Totale a pareggio</td><td className={"num "+(Math.abs(totAtt-(totPas+risultato))>0.01?"neg":"")}>{eur(totPas+risultato)}</td></tr>
+            </tbody></table>
+            {Math.abs(totAtt-(totPas+risultato))>0.01 && <p style={{fontSize:12,color:"var(--danger)",marginTop:8}}>⚠ Attivo {eur(totAtt)} ≠ Passivo+PN+risultato {eur(totPas+risultato)} (Δ {eur(totAtt-(totPas+risultato))}).</p>}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ============================================================
+// PAGINA: CESPITI E AMMORTAMENTI
+// ============================================================
+function PageCespiti({ cespiti }){
+  const rows = [...cespiti].sort((a,b)=>(b.costo||0)-(a.costo||0)).map(c=>({...c, residuo: num(c.costo)-num(c.fondo)}));
+  const tC=rows.reduce((a,c)=>a+num(c.costo),0), tF=rows.reduce((a,c)=>a+num(c.fondo),0), tQ=rows.reduce((a,c)=>a+num(c.quota),0), tR=rows.reduce((a,c)=>a+c.residuo,0);
+  return (
+    <>
+      <div className="page-head"><h2 className="serif">Cespiti e ammortamenti</h2>
+        <div className="sub">{rows.length} cespiti · costo storico {eur(tC)} · fondo amm. {eur(tF)} · valore residuo {eur(tR)}</div></div>
+
+      <div className="kpi-grid" style={{gridTemplateColumns:"repeat(4,1fr)"}}>
+        <div className="kpi"><div className="label">Costo storico</div><div className="value">{eur(tC)}</div></div>
+        <div className="kpi"><div className="label">Fondo ammortamento</div><div className="value neg">{eur(tF)}</div></div>
+        <div className="kpi"><div className="label">Quota d'esercizio</div><div className="value">{eur(tQ)}</div></div>
+        <div className="kpi accent"><div className="label">Valore netto residuo</div><div className="value">{eur(tR)}</div></div>
+      </div>
+
+      <div className="card flat" style={{padding:0,overflowX:"auto",marginTop:20}}>
+        <table className="tbl">
+          <thead><tr><th>Cespite</th><th className="num">Anno</th><th className="num">Costo storico</th><th className="num">Aliquota</th><th className="num">Quota es.</th><th className="num">Fondo amm.</th><th className="num">Valore residuo</th></tr></thead>
+          <tbody>
+            {rows.map(c=>(
+              <tr key={c._id||c.conto}>
+                <td><strong>{c.conto}</strong>{c.note?<div style={{fontSize:10.5,color:"var(--ink-3)"}}>{c.note}</div>:null}</td>
+                <td className="num">{c.anno||""}</td>
+                <td className="num">{eur(c.costo)}</td>
+                <td className="num">{Math.round(num(c.aliquota)*100)}%</td>
+                <td className="num">{eur(c.quota)}</td>
+                <td className="num neg">{eur(c.fondo)}</td>
+                <td className={"num "+(c.residuo<=0?"":"pos")}><strong>{eur(c.residuo)}</strong></td>
+              </tr>
+            ))}
+            {!rows.length && <tr><td colSpan="7" style={{textAlign:"center",color:"var(--ink-3)",padding:24}}>Nessun cespite</td></tr>}
+            <tr style={{fontWeight:700,background:"var(--panel-2)"}}><td colSpan="2">TOTALE</td><td className="num">{eur(tC)}</td><td></td><td className="num">{eur(tQ)}</td><td className="num neg">{eur(tF)}</td><td className="num">{eur(tR)}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style={{fontSize:12,color:"var(--ink-3)",marginTop:10}}>Valore residuo = costo storico − fondo ammortamento. La quota d'esercizio è l'ammortamento annuo (costo × aliquota).</p>
+    </>
+  );
+}
+
+// ============================================================
+// PAGINA: RENDICONTO FINANZIARIO
+// ============================================================
+function PageRF({ scritture, pdc }){
+  const C = useContabilita(scritture, pdc);
+  const [fMese,setFMese]=useState("");
+
+  // mesi presenti
+  const mesiPresenti = useMemo(()=> distinct(C.righe.map(r=>r.mese)).filter(m=>m!=null).sort((a,b)=>a-b), [C]);
+
+  // per ogni scrittura individuo le gambe liquide e la contropartita
+  // entrata su liquido = DARE>0 ; uscita = AVERE>0 ; classifico per categoria contropartita
+  const flussi = useMemo(()=>{
+    const out=[]; // {mese, conto, importo(+/-), fonte, tipoFlusso: OPER_E/OPER_U/INV}
+    scritture.forEach(s=>{
+      const righe=s.righe||[];
+      const liquide=righe.filter(r=>C.catLiquid(r.conto));
+      const contro=righe.filter(r=>!C.catLiquid(r.conto));
+      if(!liquide.length) return; // non monetaria: esclusa dal RF
+      liquide.forEach(r=>{
+        const delta=num(r.dare)-num(r.avere); if(Math.abs(delta)<0.005) return;
+        // fonte = contropartita prevalente
+        let fonte="VARIE", catContro="";
+        if(contro.length){
+          // prendi la contropartita di importo maggiore
+          const cp=[...contro].sort((a,b)=>(num(b.dare)+num(b.avere))-(num(a.dare)+num(a.avere)))[0];
+          fonte=cp.conto; catContro=(C.metaOf(cp.conto).categoria)||cp.categoria||"";
+        }
+        let tipo;
+        if(/IMM\.|FINANZIAR|INVESTIM/i.test(catContro)) tipo="INV";
+        else tipo = delta>0 ? "OPER_E" : "OPER_U";
+        out.push({ mese:meseOf(s.data), conto:r.conto, importo:delta, fonte, tipo });
+      });
+    });
+    return out;
+  },[C,scritture]);
+
+  const conti = C.contiLiquidi;
+  const mesiView = fMese!=="" ? [+fMese] : mesiPresenti;
+
+  // saldo cumulato di un conto fino a (escluso) un mese
+  const saldoInizialeMese = (conto, mese) => {
+    let s=0; C.righe.forEach(r=>{ if(r.conto===conto && r.mese!=null && r.mese<mese) s+=num(r.dare)-num(r.avere); }); return s;
   };
 
   return (
     <>
-      <div className="page-head"><h2 className="serif">Categorie</h2>
-        <div className="sub">{stats.length} categorie · rinomina aggiorna tutti i movimenti collegati</div></div>
-      <div className="card flat" style={{padding:0, overflowX:"auto"}}>
-        <table className="tbl">
-          <thead><tr><th>Categoria</th><th className="num">Movimenti</th><th className="num">Entrate</th><th className="num">Uscite</th><th></th></tr></thead>
-          <tbody>
-            {stats.map(s => (
-              <tr key={s.categoria}>
-                <td><strong>{s.categoria}</strong></td>
-                <td className="num">{s.n}</td>
-                <td className="num pos">{s.entrate>0?eur(s.entrate):"—"}</td>
-                <td className="num neg">{s.uscite>0?eur(s.uscite):"—"}</td>
-                <td><button className="btn ghost sm" onClick={()=>rename(s.categoria)}>Rinomina ✎</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="page-head"><h2 className="serif">Rendiconto finanziario</h2>
+        <div className="sub">Flussi di cassa per conto e per mese</div></div>
+      <div className="filters">
+        <select value={fMese} onChange={e=>setFMese(e.target.value)}>
+          <option value="">Tutti i mesi</option>
+          {mesiPresenti.map(mi=><option key={mi} value={mi}>{cap(MESI[mi])}</option>)}
+        </select>
       </div>
+
+      {mesiView.map(mese=>{
+        const fmese = flussi.filter(f=>f.mese===mese);
+        // raggruppa entrate/uscite/investimenti per fonte
+        const agg=(tipo)=>{ const m={}; fmese.filter(f=>f.tipo===tipo).forEach(f=>{ m[f.fonte]=(m[f.fonte]||0)+Math.abs(f.importo); }); return Object.entries(m).sort((a,b)=>b[1]-a[1]); };
+        const entrate=agg("OPER_E"), uscite=agg("OPER_U"), inv=agg("INV");
+        const totE=entrate.reduce((a,x)=>a+x[1],0), totU=uscite.reduce((a,x)=>a+x[1],0);
+        const totInv=fmese.filter(f=>f.tipo==="INV").reduce((a,f)=>a+f.importo,0);
+        const dispIni=conti.reduce((a,c)=>a+saldoInizialeMese(c,mese),0);
+        const variazione=totE-totU+totInv;
+        const dispFin=dispIni+variazione;
+        return (
+          <div key={mese} className="card" style={{marginBottom:18}}>
+            <div className="card-title">{cap(MESI[mese])}</div>
+            <table className="tbl"><tbody>
+              <tr style={{background:"var(--panel-2)"}}><td><strong>Disponibilità iniziali</strong></td><td className="num"><strong>{eur(dispIni)}</strong></td></tr>
+              <tr><td colSpan="2" className="field-lbl" style={{paddingTop:10}}>Entrate operative</td></tr>
+              {entrate.map(([f,v])=><tr key={"e"+f}><td style={{paddingLeft:18}}>{f}</td><td className="num pos">{eur(v)}</td></tr>)}
+              <tr style={{fontWeight:600}}><td>Totale entrate</td><td className="num pos">{eur(totE)}</td></tr>
+              <tr><td colSpan="2" className="field-lbl" style={{paddingTop:10}}>Uscite operative</td></tr>
+              {uscite.map(([f,v])=><tr key={"u"+f}><td style={{paddingLeft:18}}>{f}</td><td className="num neg">{eur(v)}</td></tr>)}
+              <tr style={{fontWeight:600}}><td>Totale uscite</td><td className="num neg">{eur(totU)}</td></tr>
+              {inv.length>0 && <><tr><td colSpan="2" className="field-lbl" style={{paddingTop:10}}>Investimenti / disinvestimenti</td></tr>
+                {inv.map(([f,v])=>{ const signed=fmese.filter(x=>x.tipo==="INV"&&x.fonte===f).reduce((a,x)=>a+x.importo,0);
+                  return <tr key={"i"+f}><td style={{paddingLeft:18}}>{f}</td><td className={"num "+(signed<0?"neg":"pos")}>{eur(signed)}</td></tr>; })}
+                <tr style={{fontWeight:600}}><td>Totale investimenti</td><td className={"num "+(totInv<0?"neg":"pos")}>{eur(totInv)}</td></tr></>}
+              <tr style={{fontWeight:700,borderTop:"2px solid var(--rule-2)"}}><td>Variazione del periodo</td><td className={"num "+(variazione<0?"neg":"")}>{eur(variazione)}</td></tr>
+              <tr style={{fontWeight:700,background:"var(--panel-2)"}}><td>Disponibilità finali</td><td className="num">{eur(dispFin)}</td></tr>
+            </tbody></table>
+          </div>
+        );
+      })}
+      {!mesiPresenti.length && <div className="empty-state">Nessun dato</div>}
     </>
   );
 }
 
 // ============================================================
-// PAGINA: IMPORT
+// PAGINA: IMPORT (LIBRO GIORNALE + PIANO DEI CONTI)
 // ============================================================
-function PageImport({ anno, movimenti, onToast }) {
-  const [preview, setPreview] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const fileRef = useRef(null);
+function EmptyImport({ anno }){
+  return <div className="empty-state">Caricamento dei dati iniziali del {anno} in corso… se resta vuoto, ricarica la pagina.</div>;
+}
 
-  const parse = (file) => {
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const wb = XLSX.read(new Uint8Array(ev.target.result), { type: "array" });
-        const ws = wb.Sheets["DATI MOVIMENTI"] || wb.Sheets[wb.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
-        const parsed = [];
-        for (let i = 1; i < rows.length; i++) {
-          const r = rows[i]; if (!r) continue;
-          const mese = r[0], tipo = r[1], conto = r[2], motivo = r[3], metodo = r[4], catg = r[5], imp = r[6];
-          if (mese == null && tipo == null && imp == null) continue;
-          const impN = num(imp);
-          if (mIdx(mese) < 0 || impN <= 0) continue;
-          parsed.push({
-            mese: String(mese).toLowerCase().trim(),
-            tipo: String(tipo || "USCITA").toUpperCase().trim() === "ENTRATA" ? "ENTRATA" : "USCITA",
-            conto: String(conto || "").trim(),
-            motivo: String(motivo || "").trim(),
-            metodo: String(metodo || "").trim(),
-            categoria: String(catg || "").trim(),
-            importo: impN
-          });
+function PageImport({ anno, scritture, onToast }){
+  const [preview,setPreview]=useState(null);
+  const [busy,setBusy]=useState(false);
+  const fileRef=useRef(null);
+
+  const parse=(file)=>{
+    const reader=new FileReader();
+    reader.onload=(ev)=>{
+      try{
+        const wb=XLSX.read(new Uint8Array(ev.target.result),{type:"array",cellDates:true});
+        // --- PIANO DEI CONTI ---
+        const wsP=wb.Sheets["PIANO DEI CONTI"];
+        const pdc=[];
+        if(wsP){
+          const rows=XLSX.utils.sheet_to_json(wsP,{header:1,defval:null});
+          let start=rows.findIndex(r=>r&&String(r[0]).toUpperCase()==="CODICE");
+          start = start>=0 ? start+1 : 2;
+          for(let i=start;i<rows.length;i++){ const r=rows[i]; if(!r) continue;
+            const cod=r[0], nome=r[1]; if(cod==null||!nome) continue;
+            pdc.push({ codice:String(cod).trim(), nome:String(nome).trim(), eccedenza:String(r[2]||"").trim(), prospetto:String(r[3]||"").trim(), categoria:String(r[4]||"").trim() });
+          }
         }
-        setPreview({ name: file.name, rows: parsed });
-      } catch (e) { alert("Errore lettura file: " + e.message); }
+        // --- LIBRO GIORNALE ---
+        const wsG=wb.Sheets["LIBRO GIORNALE"]||wb.Sheets[wb.SheetNames[0]];
+        const rows=XLSX.utils.sheet_to_json(wsG,{header:1,defval:null});
+        let start=rows.findIndex(r=>r&&String(r[0]).toUpperCase()==="DATA");
+        start = start>=0 ? start+1 : 0;
+        const scr=[]; let cur=null;
+        const flush=()=>{ if(cur&&cur.righe.length) scr.push(cur); cur=null; };
+        for(let i=start;i<rows.length;i++){
+          const r=rows[i]||[];
+          const data=r[0], cod=r[1], conto=r[2], desc=r[3], cat=r[4], dare=r[5], avere=r[6];
+          const blank=(conto==null||conto==="")&&(dare==null||dare==="")&&(avere==null||avere==="");
+          const isMonthHdr = typeof data==="string" && mIdxName(data)>=0 && blank;
+          const isAnno = typeof data==="string" && /ANNO/i.test(data);
+          if(blank){ if(!isMonthHdr&&!isAnno) flush(); continue; }
+          const iso=toISO(data);
+          const hasDate = !!iso;
+          if(cur==null){ cur={data:iso, descrizione:desc?String(desc).trim():"", righe:[]}; }
+          else if(hasDate){ flush(); cur={data:iso, descrizione:desc?String(desc).trim():"", righe:[]}; }
+          if(!cur.data && iso) cur.data=iso;
+          if(!cur.descrizione && desc) cur.descrizione=String(desc).trim();
+          if(conto){ cur.righe.push({ conto:String(conto).trim(), codice: cod!=null?String(cod).trim():"", categoria: cat?String(cat).trim():"", dare:num(dare), avere:num(avere) }); }
+        }
+        flush();
+        // I blocchi "RIEPILOGO" sono riepiloghi mensili, non scritture in partita doppia → esclusi
+        const escluse = scr.filter(s=>/riepilog/i.test(s.descrizione||"")).length;
+        const scrClean = scr.filter(s=>!/riepilog/i.test(s.descrizione||""));
+        // statistiche quadratura
+        let td=0,ta=0; scrClean.forEach(s=>s.righe.forEach(r=>{td+=r.dare;ta+=r.avere;}));
+        setPreview({ name:file.name, pdc, scritture:scrClean, escluse, totDare:td, totAvere:ta });
+      }catch(e){ alert("Errore lettura file: "+e.message); }
     };
     reader.readAsArrayBuffer(file);
   };
 
-  const doImport = async (clear) => {
-    if (!preview) return;
-    setBusy(true);
-    try {
-      if (clear && movimenti.length) {
-        if (!window.confirm(`Cancellare i ${movimenti.length} movimenti esistenti del ${anno} prima di importare?`)) { setBusy(false); return; }
-        await db.ref(`finanze/${anno}/movimenti`).remove();
+  const doImport=async(clear)=>{
+    if(!preview) return; setBusy(true);
+    try{
+      const base=`finanze/${anno}`;
+      if(clear){
+        if(!window.confirm(`Sostituire TUTTI i dati del ${anno} (scritture + piano dei conti)?`)){ setBusy(false); return; }
+        await db.ref(`${base}/scritture`).remove();
+        await db.ref(`${base}/pdc`).remove();
       }
-      const updates = {};
-      preview.rows.forEach(r => {
-        const key = db.ref(`finanze/${anno}/movimenti`).push().key;
-        updates[key] = { ...r, createdAt: new Date().toISOString() };
-      });
-      await db.ref(`finanze/${anno}/movimenti`).update(updates);
-      onToast(`Importati ${preview.rows.length} movimenti`);
-      setPreview(null);
-      if (fileRef.current) fileRef.current.value = "";
-    } catch (e) { alert("Errore import: " + e.message); }
+      // piano dei conti
+      if(preview.pdc.length){
+        const upd={}; preview.pdc.forEach(c=>{ upd[keyOf(c.codice)+"_"+keyOf(c.nome)]=c; });
+        await db.ref(`${base}/pdc`).update(upd);
+      }
+      // scritture
+      const upd={};
+      preview.scritture.forEach(s=>{ const key=db.ref(`${base}/scritture`).push().key; upd[key]={...s, createdAt:new Date().toISOString()}; });
+      await db.ref(`${base}/scritture`).update(upd);
+      onToast(`Importate ${preview.scritture.length} scritture e ${preview.pdc.length} conti`);
+      setPreview(null); if(fileRef.current) fileRef.current.value="";
+    }catch(e){ alert("Errore import: "+e.message); }
     setBusy(false);
   };
-
-  const sums = preview ? preview.rows.reduce((a,r)=>{ r.tipo==="ENTRATA"?a.e+=r.importo:a.u+=r.importo; return a; }, {e:0,u:0}) : null;
 
   return (
     <>
       <div className="page-head"><h2 className="serif">Import da Excel</h2>
-        <div className="sub">Legge il foglio <span className="mono">DATI MOVIMENTI</span> (colonne MESE · TIPO · CONTO · MOTIVO · METODO · CATEGORIA · IMPORTO)</div></div>
-
-      <div className="card">
-        <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={e => e.target.files[0] && parse(e.target.files[0])} />
-      </div>
+        <div className="sub">Legge i fogli <span className="mono">LIBRO GIORNALE</span> e <span className="mono">PIANO DEI CONTI</span></div></div>
+      <div className="card"><input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={e=>e.target.files[0]&&parse(e.target.files[0])} /></div>
 
       {preview && (
         <div className="card" style={{marginTop:20}}>
           <div className="card-title">Anteprima · {preview.name}</div>
-          <p style={{fontSize:13.5}}>Trovati <strong>{preview.rows.length}</strong> movimenti validi — entrate {eur(sums.e)}, uscite {eur(sums.u)}.</p>
-          <div className="card flat" style={{padding:0, overflowX:"auto", maxHeight:300, overflowY:"auto"}}>
-            <table className="tbl">
-              <thead><tr><th>Mese</th><th>Tipo</th><th>Conto</th><th>Motivo</th><th>Categoria</th><th className="num">Importo</th></tr></thead>
-              <tbody>
-                {preview.rows.slice(0, 30).map((r,i) => (
-                  <tr key={i}><td>{cap(r.mese)}</td>
-                    <td><span className={"pill " + (r.tipo==="ENTRATA"?"entrata":"uscita")}>{r.tipo==="ENTRATA"?"Entrata":"Uscita"}</span></td>
-                    <td>{r.conto}</td><td>{r.motivo}</td><td>{r.categoria}</td>
-                    <td className={"num " + (r.tipo==="ENTRATA"?"pos":"neg")}>{eur(r.importo)}</td></tr>
-                ))}
-              </tbody>
-            </table>
+          <p style={{fontSize:13.5}}>Trovate <strong>{preview.scritture.length}</strong> scritture e <strong>{preview.pdc.length}</strong> conti{preview.escluse?` (esclusi ${preview.escluse} riepiloghi mensili)`:""}.
+            Quadratura: DARE {eur(preview.totDare)} / AVERE {eur(preview.totAvere)} {Math.abs(preview.totDare-preview.totAvere)<0.01?"✓":"⚠ sbilancio "+eur(preview.totDare-preview.totAvere)}.</p>
+          <div className="card flat" style={{padding:0,overflowX:"auto",maxHeight:300,overflowY:"auto"}}>
+            <table className="tbl"><thead><tr><th>Data</th><th>Descrizione</th><th>Righe</th></tr></thead>
+              <tbody>{preview.scritture.slice(0,25).map((s,i)=>(
+                <tr key={i}><td>{fmtData(s.data)}</td><td>{s.descrizione}</td><td>{s.righe.map(r=>r.conto).join(" / ")}</td></tr>
+              ))}</tbody></table>
           </div>
-          {preview.rows.length > 30 && <p style={{fontSize:12, color:"var(--ink-3)"}}>…e altri {preview.rows.length-30} movimenti.</p>}
-          <div style={{display:"flex", gap:10, marginTop:16, flexWrap:"wrap"}}>
-            <button className="btn accent" disabled={busy} onClick={()=>doImport(false)}>{busy?"Importo…":"Aggiungi ai movimenti esistenti"}</button>
-            <button className="btn danger" disabled={busy} onClick={()=>doImport(true)}>Sostituisci tutto</button>
+          {preview.scritture.length>25 && <p style={{fontSize:12,color:"var(--ink-3)"}}>…e altre {preview.scritture.length-25} scritture.</p>}
+          <div style={{display:"flex",gap:10,marginTop:16,flexWrap:"wrap"}}>
+            <button className="btn accent" disabled={busy} onClick={()=>doImport(true)}>{busy?"Importo…":"Sostituisci tutto e importa"}</button>
+            <button className="btn ghost" disabled={busy} onClick={()=>doImport(false)}>Aggiungi senza cancellare</button>
             <button className="btn ghost" disabled={busy} onClick={()=>{setPreview(null); if(fileRef.current) fileRef.current.value="";}}>Annulla</button>
           </div>
         </div>
@@ -1572,50 +1597,222 @@ function PageImport({ anno, movimenti, onToast }) {
 // ============================================================
 // PAGINA: EXPORT
 // ============================================================
-function PageExport({ movimenti, anno }) {
-  const exportExcel = () => {
-    const wb = XLSX.utils.book_new();
-    const movRows = [...movimenti].sort((a,b)=>mIdx(a.mese)-mIdx(b.mese)).map(m => ({
-      MESE: cap(m.mese), TIPO: m.tipo, CONTO: m.conto, MOTIVO: m.motivo,
-      METODO: m.metodo, CATEGORIA: m.categoria, IMPORTO: num(m.importo)
-    }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(movRows), "MOVIMENTI");
-
-    const catMap = {};
-    movimenti.forEach(m => {
-      const c = m.categoria || "(senza)";
-      if (!catMap[c]) catMap[c] = { CATEGORIA: c, ENTRATE: 0, USCITE: 0 };
-      m.tipo==="ENTRATA" ? catMap[c].ENTRATE += num(m.importo) : catMap[c].USCITE += num(m.importo);
+function PageExport({ scritture, pdc, anno }){
+  const C = useContabilita(scritture, pdc);
+  const exportExcel=()=>{
+    const wb=XLSX.utils.book_new();
+    const gj=[]; [...scritture].sort((a,b)=>(a.data||"").localeCompare(b.data||"")).forEach(s=>{
+      (s.righe||[]).forEach((r,i)=> gj.push({ DATA:i===0?fmtData(s.data):"", DESCRIZIONE:i===0?s.descrizione:"", CONTO:r.conto, CATEGORIA:r.categoria, DARE:num(r.dare)||"", AVERE:num(r.avere)||"" }));
     });
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(Object.values(catMap)), "PER CATEGORIA");
-    XLSX.writeFile(wb, `finanze_${anno}.xlsx`);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(gj), "LIBRO GIORNALE");
+    const bdv=Object.values(C.perConto).sort((a,b)=>a.conto.localeCompare(b.conto)).map(c=>({CONTO:c.conto,PROSPETTO:c.meta.prospetto||"",CATEGORIA:c.meta.categoria||"","SOMMA DARE":c.dare,"SOMMA AVERE":c.avere,SALDO:c.saldo}));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(bdv), "BILANCIO DI VERIFICA");
+    XLSX.writeFile(wb, `contabilita_${anno}.xlsx`);
+  };
+  return (
+    <>
+      <div className="page-head"><h2 className="serif">Export</h2><div className="sub">Scarica i dati del {anno}</div></div>
+      <div className="card">
+        <p style={{fontSize:14,marginTop:0}}>{scritture.length} scritture pronte.</p>
+        <button className="btn accent" onClick={exportExcel}>↧ Esporta Excel (Giornale + BdV)</button>
+      </div>
+    </>
+  );
+}
+
+// ============================================================
+// PAGINA: NUOVA SCRITTURA (rapida + libera)
+// ============================================================
+function PageNuova({ anno, pdc, onToast }){
+  const contiAll = useMemo(()=> distinct(pdc.map(c=>c.nome)).sort(), [pdc]);
+  const liquidi = useMemo(()=> pdc.filter(c=>isLiquid(c.categoria)).map(c=>c.nome), [pdc]);
+  const metaOf = (nome)=> pdc.find(c=>c.nome===nome)||{};
+  const [mode,setMode]=useState("rapido");
+  const [data,setData]=useState(new Date().toISOString().slice(0,10));
+  const [desc,setDesc]=useState("");
+  const [tipo,setTipo]=useState("USCITA");
+  const [contoLiq,setContoLiq]=useState("");
+  const [contro,setContro]=useState("");
+  const [imp,setImp]=useState("");
+  const [righe,setRighe]=useState([{conto:"",dare:"",avere:""},{conto:"",dare:"",avere:""}]);
+  const [busy,setBusy]=useState(false);
+
+  useEffect(()=>{ if(!contoLiq && liquidi.length) setContoLiq(liquidi[0]); },[liquidi]);
+
+  const push = async (righeS)=>{
+    setBusy(true);
+    try{ await db.ref(`finanze/${anno}/scritture`).push({ data, descrizione:desc.trim(), righe:righeS, createdAt:new Date().toISOString() });
+      onToast("Scrittura registrata"); setImp(""); setDesc("");
+      setRighe([{conto:"",dare:"",avere:""},{conto:"",dare:"",avere:""}]);
+    }catch(e){ alert("Errore: "+e.message); }
+    setBusy(false);
   };
 
-  const exportPDF = () => {
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF();
-    doc.setFontSize(16); doc.text(`Finanze personali · ${anno}`, 14, 18);
-    let e=0,u=0; movimenti.forEach(m => m.tipo==="ENTRATA"?e+=num(m.importo):u+=num(m.importo));
-    doc.setFontSize(11);
-    doc.text(`Entrate: ${eur(e)}   Uscite: ${eur(u)}   Saldo: ${eur(e-u)}`, 14, 27);
-    const catMap = {};
-    movimenti.filter(m=>m.tipo==="USCITA").forEach(m => catMap[m.categoria||"(senza)"] = (catMap[m.categoria||"(senza)"]||0)+num(m.importo));
-    const body = Object.entries(catMap).sort((a,b)=>b[1]-a[1]).map(([c,v]) => [c, eur(v)]);
-    doc.autoTable({ startY: 34, head: [["Categoria di spesa", "Totale"]], body,
-      styles:{ fontSize:9 }, headStyles:{ fillColor:[45,94,62] } });
-    doc.save(`finanze_${anno}.pdf`);
+  const salvaRapido=()=>{
+    const a=num(imp);
+    if(a<=0) return alert("Importo non valido");
+    if(!contoLiq) return alert("Scegli il conto (liquido)");
+    if(!contro) return alert("Scegli la contropartita");
+    if(!desc.trim()) return alert("Aggiungi una descrizione");
+    const lm=metaOf(contoLiq), cm=metaOf(contro);
+    const liq=(d,av)=>({conto:contoLiq,codice:lm.codice||"",categoria:lm.categoria||"",dare:d,avere:av});
+    const cp=(d,av)=>({conto:contro,codice:cm.codice||"",categoria:cm.categoria||"",dare:d,avere:av});
+    push(tipo==="ENTRATA" ? [liq(a,0),cp(0,a)] : [cp(a,0),liq(0,a)]);
+  };
+
+  const totD=righe.reduce((s,r)=>s+num(r.dare),0), totA=righe.reduce((s,r)=>s+num(r.avere),0);
+  const quad=Math.abs(totD-totA)<0.01 && totD>0;
+  const setRiga=(i,f,v)=>{ const nr=righe.map((r,j)=> j===i?{...r,[f]:v}:r);
+    if(f==="dare"&&v) nr[i].avere=""; if(f==="avere"&&v) nr[i].dare=""; setRighe(nr); };
+  const salvaLibero=()=>{
+    if(!desc.trim()) return alert("Aggiungi una descrizione");
+    if(!quad) return alert(`La scrittura non quadra: DARE ${totD.toFixed(2)} ≠ AVERE ${totA.toFixed(2)}`);
+    const valide=righe.filter(r=>r.conto&&(num(r.dare)||num(r.avere)));
+    if(valide.length<2) return alert("Servono almeno 2 righe valide");
+    push(valide.map(r=>{ const m=metaOf(r.conto); return {conto:r.conto,codice:m.codice||"",categoria:m.categoria||"",dare:num(r.dare),avere:num(r.avere)}; }));
   };
 
   return (
     <>
-      <div className="page-head"><h2 className="serif">Export</h2>
-        <div className="sub">Scarica i dati del {anno}</div></div>
+      <div className="page-head"><h2 className="serif">Nuova scrittura</h2>
+        <div className="sub">Registra un movimento in partita doppia</div></div>
+      {!pdc.length && <div className="empty-state" style={{marginBottom:16}}>Caricamento del piano dei conti in corso… attendi qualche secondo e ricarica se necessario.</div>}
+
+      <div className="seg" style={{marginBottom:16}}>
+        <button className={mode==="rapido"?"on entrata":""} onClick={()=>setMode("rapido")}>Rapida</button>
+        <button className={mode==="libero"?"on entrata":""} onClick={()=>setMode("libero")}>Scrittura libera</button>
+      </div>
+
       <div className="card">
-        <p style={{fontSize:14, marginTop:0}}>{movimenti.length} movimenti pronti all'esportazione.</p>
-        <div style={{display:"flex", gap:10, flexWrap:"wrap"}}>
-          <button className="btn accent" onClick={exportExcel}>↧ Esporta Excel</button>
-          <button className="btn" onClick={exportPDF}>↧ Esporta PDF (riepilogo)</button>
+        <div className="form-grid">
+          <div><span className="field-lbl">Data</span><input type="date" value={data} onChange={e=>setData(e.target.value)} style={{width:"100%"}} /></div>
+          <div><span className="field-lbl">Descrizione</span><input type="text" value={desc} onChange={e=>setDesc(e.target.value)} style={{width:"100%"}} /></div>
         </div>
+
+        {mode==="rapido" ? (
+          <div style={{marginTop:14}}>
+            <div className="field-full" style={{marginBottom:12}}>
+              <span className="field-lbl">Tipo</span>
+              <div className="seg">
+                <button type="button" className={tipo==="ENTRATA"?"on entrata":""} onClick={()=>setTipo("ENTRATA")}>Entrata</button>
+                <button type="button" className={tipo==="USCITA"?"on uscita":""} onClick={()=>setTipo("USCITA")}>Uscita</button>
+              </div>
+            </div>
+            <div className="form-grid">
+              <div><span className="field-lbl">Conto (liquido)</span>
+                <select value={contoLiq} onChange={e=>setContoLiq(e.target.value)} style={{width:"100%"}}>
+                  {liquidi.map(c=><option key={c} value={c}>{c}</option>)}
+                </select></div>
+              <div><span className="field-lbl">Importo (€)</span><input type="text" inputMode="decimal" value={imp} placeholder="0,00" onChange={e=>setImp(e.target.value)} style={{width:"100%"}} /></div>
+              <div className="field-full"><span className="field-lbl">Contropartita ({tipo==="ENTRATA"?"da dove arriva":"per cosa"})</span>
+                <input type="text" list="dl-contro" value={contro} onChange={e=>setContro(e.target.value)} style={{width:"100%"}} placeholder="es. STIPENDI PWC / SPESE DIVERSE" />
+                <datalist id="dl-contro">{contiAll.map(c=><option key={c} value={c} />)}</datalist></div>
+            </div>
+            <button className="btn accent" disabled={busy} style={{marginTop:16}} onClick={salvaRapido}>Registra scrittura</button>
+          </div>
+        ) : (
+          <div style={{marginTop:14}}>
+            <span className="field-lbl">Righe (almeno 2; per ogni riga importo in DARE oppure AVERE)</span>
+            <table className="tbl"><thead><tr><th>Conto</th><th className="num">Dare</th><th className="num">Avere</th><th></th></tr></thead>
+              <tbody>{righe.map((r,i)=>(
+                <tr key={i}>
+                  <td><input type="text" list="dl-conti-all" value={r.conto} onChange={e=>setRiga(i,"conto",e.target.value)} style={{width:"100%"}} /></td>
+                  <td><input type="text" inputMode="decimal" value={r.dare} onChange={e=>setRiga(i,"dare",e.target.value)} style={{width:90,textAlign:"right"}} /></td>
+                  <td><input type="text" inputMode="decimal" value={r.avere} onChange={e=>setRiga(i,"avere",e.target.value)} style={{width:90,textAlign:"right"}} /></td>
+                  <td>{righe.length>2 && <button className="btn ghost sm" onClick={()=>setRighe(righe.filter((_,j)=>j!==i))}>✕</button>}</td>
+                </tr>
+              ))}</tbody></table>
+            <datalist id="dl-conti-all">{contiAll.map(c=><option key={c} value={c} />)}</datalist>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10,flexWrap:"wrap",gap:10}}>
+              <button className="btn ghost sm" onClick={()=>setRighe([...righe,{conto:"",dare:"",avere:""}])}>+ Aggiungi riga</button>
+              <span className="mono" style={{fontSize:12.5,color:quad?"var(--accent)":"var(--danger)"}}>
+                DARE {eur(totD)} · AVERE {eur(totA)} · {quad?"quadrata ✓":"Δ "+eur(totD-totA)}</span>
+            </div>
+            <button className="btn accent" disabled={busy} style={{marginTop:16}} onClick={salvaLibero}>Registra scrittura</button>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ============================================================
+// PAGINA: RIEPILOGO MOVIMENTI
+// ============================================================
+function PageRiepilogo({ movimenti }){
+  const [fMese,setFMese]=useState(""), [fConto,setFConto]=useState(""), [fCat,setFCat]=useState(""), [fTipo,setFTipo]=useState(""), [q,setQ]=useState("");
+  const conti = distinct(movimenti.map(m=>m.conto)).sort();
+  const categorie = distinct(movimenti.map(m=>m.categoria)).sort();
+
+  const view = useMemo(()=> movimenti.filter(m=>
+    (!fMese||m.mese===fMese) && (!fConto||m.conto===fConto) && (!fCat||m.categoria===fCat) &&
+    (!fTipo||m.tipo===fTipo) && (!q||(m.motivo||"").toLowerCase().includes(q.toLowerCase()))
+  ).sort((a,b)=> mIdxName(a.mese)-mIdxName(b.mese)), [movimenti,fMese,fConto,fCat,fTipo,q]);
+
+  const e=view.filter(m=>m.tipo==="ENTRATA").reduce((a,m)=>a+num(m.importo),0);
+  const u=view.filter(m=>m.tipo==="USCITA").reduce((a,m)=>a+num(m.importo),0);
+
+  const mensile = useMemo(()=>{
+    const mp={}; movimenti.forEach(m=>{ const i=mIdxName(m.mese); if(i<0) return;
+      mp[i]=mp[i]||{e:0,u:0}; m.tipo==="ENTRATA"?mp[i].e+=num(m.importo):mp[i].u+=num(m.importo); });
+    return Object.keys(mp).map(Number).sort((a,b)=>a-b).map(i=>({i,...mp[i],delta:mp[i].e-mp[i].u}));
+  },[movimenti]);
+
+  return (
+    <>
+      <div className="page-head"><h2 className="serif">Riepilogo movimenti</h2>
+        <div className="sub">{movimenti.length} movimenti di cassa (entrate / uscite)</div></div>
+
+      <div className="card" style={{marginBottom:18}}>
+        <div className="card-title">Riepilogo mensile</div>
+        <div style={{overflowX:"auto"}}><table className="tbl">
+          <thead><tr><th>Mese</th><th className="num">Entrate</th><th className="num">Uscite</th><th className="num">Delta</th></tr></thead>
+          <tbody>
+            {mensile.map(m=>(
+              <tr key={m.i}><td><strong>{cap(MESI[m.i])}</strong></td>
+                <td className="num pos">{eur(m.e)}</td><td className="num neg">{eur(m.u)}</td>
+                <td className={"num "+(m.delta<0?"neg":"")}>{eur(m.delta)}</td></tr>
+            ))}
+            <tr style={{fontWeight:700,background:"var(--panel-2)"}}><td>Totale</td>
+              <td className="num pos">{eur(mensile.reduce((a,m)=>a+m.e,0))}</td>
+              <td className="num neg">{eur(mensile.reduce((a,m)=>a+m.u,0))}</td>
+              <td className="num">{eur(mensile.reduce((a,m)=>a+m.delta,0))}</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+
+      <div className="filters">
+        <select value={fMese} onChange={e=>setFMese(e.target.value)}>
+          <option value="">Tutti i mesi</option>{MESI.map(m=><option key={m} value={m}>{cap(m)}</option>)}
+        </select>
+        <select value={fTipo} onChange={e=>setFTipo(e.target.value)}>
+          <option value="">Entrate + Uscite</option><option value="ENTRATA">Solo entrate</option><option value="USCITA">Solo uscite</option>
+        </select>
+        <select value={fConto} onChange={e=>setFConto(e.target.value)}>
+          <option value="">Tutti i conti</option>{conti.map(c=><option key={c} value={c}>{c}</option>)}
+        </select>
+        <select value={fCat} onChange={e=>setFCat(e.target.value)}>
+          <option value="">Tutte le categorie</option>{categorie.map(c=><option key={c} value={c}>{c}</option>)}
+        </select>
+        <input type="text" placeholder="Cerca motivo…" value={q} onChange={e=>setQ(e.target.value)} />
+        {(fMese||fConto||fCat||fTipo||q) && <button className="btn ghost sm" onClick={()=>{setFMese("");setFConto("");setFCat("");setFTipo("");setQ("");}}>Reset</button>}
+      </div>
+
+      <div className="card flat" style={{padding:0,overflowX:"auto"}}>
+        <table className="tbl">
+          <thead><tr><th>Mese</th><th>Tipo</th><th>Conto</th><th>Motivo</th><th>Categoria</th><th>Metodo</th><th className="num">Importo</th></tr></thead>
+          <tbody>
+            {view.map((m,i)=>(
+              <tr key={i}><td>{cap(m.mese)}</td>
+                <td><span className="chip" style={{color:m.tipo==="ENTRATA"?"var(--accent)":"var(--danger)"}}>{m.tipo==="ENTRATA"?"Entrata":"Uscita"}</span></td>
+                <td>{m.conto}</td><td>{m.motivo}</td><td style={{color:"var(--ink-3)"}}>{m.categoria}</td>
+                <td style={{color:"var(--ink-3)"}}>{m.metodo}</td>
+                <td className={"num "+(m.tipo==="ENTRATA"?"pos":"neg")}>{m.tipo==="ENTRATA"?"+":"−"}{eur(m.importo).replace("−","")}</td></tr>
+            ))}
+            {!view.length && <tr><td colSpan="7" style={{textAlign:"center",color:"var(--ink-3)",padding:24}}>Nessun movimento</td></tr>}
+            <tr style={{fontWeight:700,background:"var(--panel-2)"}}><td colSpan="6">Totale ({view.length}) · entrate {eur(e)} · uscite {eur(u)}</td><td className="num">{eur(e-u)}</td></tr>
+          </tbody>
+        </table>
       </div>
     </>
   );
@@ -1624,99 +1821,72 @@ function PageExport({ movimenti, anno }) {
 // ============================================================
 // APP
 // ============================================================
-function App() {
-  const [user, setUser] = useState(undefined);   // undefined = verifica, null = fuori, oggetto = dentro
-  const [anno, setAnno] = useState(ANNO_DEFAULT);
-  const [page, setPage] = useState("dashboard");
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [toast, setToast] = useState(null);
+function App(){
+  const [user,setUser]=useState(undefined);
+  const [anno,setAnno]=useState(ANNO_DEFAULT);
+  const [page,setPage]=useState("dashboard");
+  const [sidebarOpen,setSidebarOpen]=useState(false);
+  const [toast,setToast]=useState(null);
 
-  useEffect(() => {
-    if (!auth) { setUser(null); return; }
-    return auth.onAuthStateChanged(u => setUser(u || null));
-  }, []);
+  useEffect(()=>{ if(!auth){ setUser(null); return; } return auth.onAuthStateChanged(u=>setUser(u||null)); },[]);
+  const { pdc, scritture, movimenti, cespiti, dispTarget, loading } = useData(anno, user);
+  const showToast=(msg,type="success")=>{ setToast({msg,type}); setTimeout(()=>setToast(null),2600); };
 
-  const { movimenti, budget, saldi, loading } = useData(anno, user);
+  useEffect(()=>{ if(db&&user) seedData(anno).then(s=>{ if(s) showToast("Dati caricati dall'Excel nel database"); }); },[user,anno]);
 
-  const showToast = (msg, type="success") => { setToast({ msg, type }); setTimeout(()=>setToast(null), 2400); };
+  if(!firebaseReady) return <div className="login-shell"><div className="login-card"><div className="logo">Configurazione richiesta</div><div className="tag">Firebase non configurato.</div></div></div>;
+  if(user===undefined) return <div className="login-shell"><div className="login-card"><div className="tag">Verifica accesso…</div></div></div>;
+  if(!user) return <Login />;
 
-  const conti = useMemo(() => distinct([...CONTI_DEFAULT, ...saldi.map(s=>s.conto), ...movimenti.map(m=>m.conto)]), [movimenti, saldi]);
-  const metodi = useMemo(() => distinct(movimenti.map(m=>m.metodo)).sort(), [movimenti]);
-  const categorie = useMemo(() => distinct(movimenti.map(m=>m.categoria)).sort(), [movimenti]);
-
-  if (!firebaseReady) {
-    return (
-      <div className="login-shell">
-        <div className="login-card">
-          <div className="logo">Configurazione richiesta</div>
-          <div className="tag" style={{marginBottom:20}}>Firebase non è ancora configurato.</div>
-          <p style={{fontSize:13, lineHeight:1.6, color:"var(--ink-2)"}}>
-            Apri <span className="mono">index.html</span> e incolla la configurazione del tuo progetto Firebase <strong>personale</strong> nel blocco <span className="mono">FIREBASE_CONFIG</span> (in cima allo script). Poi ricarica la pagina.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (user === undefined) return <div className="login-shell"><div className="login-card"><div className="tag">Verifica accesso…</div></div></div>;
-  if (!user) return <Login />;
-
-  const anni = distinct([ANNO_DEFAULT, anno, "2025", "2027"]).sort();
+  const anni = distinct([ANNO_DEFAULT,anno,"2025","2027"]).sort();
+  const nav=[
+    ["Operatività",[["dashboard","◆","Disponibilità reali"],["nuova","+","Nuova scrittura"],["riepilogo","≣","Riepilogo movimenti"],["giornale","≡","Libro giornale"]]],
+    ["Prospetti",[["pivot","⊞","Pivot conti"],["rf","◷","Rendiconto finanziario"],["bdv","▦","Bilancio · CE · SP"],["cespiti","◳","Cespiti e ammortamenti"]]],
+    ["Dati",[["export","↧","Export"]]],
+  ];
 
   return (
     <div className="app">
       <div className="topbar">
         <button className="menu-btn" onClick={()=>setSidebarOpen(!sidebarOpen)} aria-label="Menu">☰</button>
-        <h1>Finanze Personali <span className="sub">— entrate · uscite · budget</span></h1>
+        <h1>Contabilità Personale <span className="sub">— partita doppia</span></h1>
         <span className="badge desktop-only">Anno</span>
-        <select value={anno} onChange={e=>setAnno(e.target.value)}>
-          {anni.map(a => <option key={a} value={a}>{a}</option>)}
-        </select>
-        <button className="icon-btn" onClick={()=> auth.signOut()}>Esci</button>
+        <select value={anno} onChange={e=>setAnno(e.target.value)}>{anni.map(a=><option key={a} value={a}>{a}</option>)}</select>
+        <button className="icon-btn" onClick={()=>auth.signOut()}>Esci</button>
       </div>
-
       <div className="layout">
-        <nav className={"sidebar " + (sidebarOpen ? "open" : "")} onClick={(e)=>{
-          if (e.target.tagName === "BUTTON" && e.target.classList.contains("navlink")) setSidebarOpen(false);
-        }}>
-          <div className="section-label">Operatività</div>
-          <button className={"navlink "+(page==="dashboard"?"active":"")} onClick={()=>setPage("dashboard")}><span className="ico">◆</span> Dashboard</button>
-          <button className={"navlink "+(page==="nuovo"?"active":"")} onClick={()=>setPage("nuovo")}><span className="ico">+</span> Nuovo movimento</button>
-          <button className={"navlink "+(page==="movimenti"?"active":"")} onClick={()=>setPage("movimenti")}><span className="ico">≡</span> Movimenti</button>
-
-          <div className="section-label">Pianificazione</div>
-          <button className={"navlink "+(page==="budget"?"active":"")} onClick={()=>setPage("budget")}><span className="ico">◷</span> Budget</button>
-          <button className={"navlink "+(page==="conti"?"active":"")} onClick={()=>setPage("conti")}><span className="ico">▦</span> Conti</button>
-          <button className={"navlink "+(page==="categorie"?"active":"")} onClick={()=>setPage("categorie")}><span className="ico">⊞</span> Categorie</button>
-
-          <div className="section-label">Dati</div>
-          <button className={"navlink "+(page==="import"?"active":"")} onClick={()=>setPage("import")}><span className="ico">↥</span> Import Excel</button>
-          <button className={"navlink "+(page==="export"?"active":"")} onClick={()=>setPage("export")}><span className="ico">↧</span> Export</button>
+        <nav className={"sidebar "+(sidebarOpen?"open":"")} onClick={(e)=>{ if(e.target.tagName==="BUTTON"&&e.target.classList.contains("navlink")) setSidebarOpen(false); }}>
+          {nav.map(([sec,items])=>(
+            <React.Fragment key={sec}>
+              <div className="section-label">{sec}</div>
+              {items.map(([id,ico,label])=>(
+                <button key={id} className={"navlink "+(page===id?"active":"")} onClick={()=>setPage(id)}><span className="ico">{ico}</span> {label}</button>
+              ))}
+            </React.Fragment>
+          ))}
         </nav>
         {sidebarOpen && <div className="sidebar-backdrop" onClick={()=>setSidebarOpen(false)}></div>}
-
         <main className="main">
-          {loading ? <div className="empty-state">Caricamento dati…</div> : (
-            <>
-              {page==="dashboard" && <PageDashboard movimenti={movimenti} saldi={saldi} conti={conti} anno={anno} />}
-              {page==="nuovo" && <PageNuovo anno={anno} conti={conti} metodi={metodi} categorie={categorie} onDone={(m)=>{showToast(m); setPage("movimenti");}} />}
-              {page==="movimenti" && <PageMovimenti anno={anno} movimenti={movimenti} conti={conti} metodi={metodi} categorie={categorie} onToast={showToast} />}
-              {page==="budget" && <PageBudget anno={anno} movimenti={movimenti} budget={budget} categorie={categorie} onToast={showToast} />}
-              {page==="conti" && <PageConti anno={anno} movimenti={movimenti} saldi={saldi} conti={conti} onToast={showToast} />}
-              {page==="categorie" && <PageCategorie anno={anno} movimenti={movimenti} onToast={showToast} />}
-              {page==="import" && <PageImport anno={anno} movimenti={movimenti} onToast={showToast} />}
-              {page==="export" && <PageExport movimenti={movimenti} anno={anno} />}
-            </>
-          )}
+          {loading ? <div className="empty-state">Caricamento…</div> : <>
+            {page==="dashboard" && <PageDashboard scritture={scritture} pdc={pdc} movimenti={movimenti} dispTarget={dispTarget} anno={anno} />}
+            {page==="nuova" && <PageNuova anno={anno} pdc={pdc} onToast={showToast} />}
+            {page==="riepilogo" && <PageRiepilogo movimenti={movimenti} />}
+            {page==="giornale" && <PageGiornale scritture={scritture} pdc={pdc} anno={anno} onToast={showToast} />}
+            {page==="pivot" && <PagePivotConti scritture={scritture} pdc={pdc} />}
+            {page==="rf" && <PageRF scritture={scritture} pdc={pdc} />}
+            {page==="bdv" && <PageBdV scritture={scritture} pdc={pdc} />}
+            {page==="cespiti" && <PageCespiti cespiti={cespiti} />}
+            {page==="export" && <PageExport scritture={scritture} pdc={pdc} anno={anno} />}
+          </>}
         </main>
       </div>
-
-      {toast && <div className={"toast " + (toast.type||"")}>{toast.msg}</div>}
+      {toast && <div className={"toast "+(toast.type||"")}>{toast.msg}</div>}
     </div>
   );
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
 </script>
 </body>
 </html>
