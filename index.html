@@ -880,7 +880,15 @@ async function seedData(anno){
 // ============================================================
 const MESI = ["gennaio","febbraio","marzo","aprile","maggio","giugno","luglio","agosto","settembre","ottobre","novembre","dicembre"];
 const mIdxName = (m) => MESI.indexOf(String(m||"").toLowerCase().trim());
-const num = (n) => { if (n==null||n==="") return 0; const v = Number(String(n).replace(",",".")); return isNaN(v)?0:v; };
+const num = (n) => {
+  if (n==null||n==="") return 0;
+  if (typeof n==="number") return isNaN(n)?0:n;
+  let s = String(n).trim().replace(/[€\s]/g,"");
+  if (s.indexOf(",")>-1 && s.indexOf(".")>-1) s = s.replace(/\./g,"").replace(",","."); // 1.300,50 -> 1300.50
+  else if (s.indexOf(",")>-1) s = s.replace(",",".");                                    // 1300,50  -> 1300.50
+  const v = Number(s);
+  return isNaN(v)?0:v;
+};
 const eur = (n) => (n<0?"−":"") + "€ " + Math.abs(num(n)).toLocaleString("it-IT",{minimumFractionDigits:2,maximumFractionDigits:2});
 const cap = (s) => s ? String(s).charAt(0).toUpperCase()+String(s).slice(1).toLowerCase() : s;
 const keyOf = (s) => String(s||"").replace(/[.#$/\[\]]/g,"_").trim()||"_";
@@ -1626,7 +1634,7 @@ function PageExport({ scritture, pdc, anno }){
 function PageNuova({ anno, pdc, onToast }){
   const contiAll = useMemo(()=> distinct(pdc.map(c=>c.nome)).sort(), [pdc]);
   const liquidi = useMemo(()=> pdc.filter(c=>isLiquid(c.categoria)).map(c=>c.nome), [pdc]);
-  const metaOf = (nome)=> pdc.find(c=>c.nome===nome)||{};
+  const metaOf = (nome)=> pdc.find(c=>String(c.nome).trim()===String(nome||"").trim())||{};
   const [mode,setMode]=useState("rapido");
   const [data,setData]=useState(new Date().toISOString().slice(0,10));
   const [desc,setDesc]=useState("");
@@ -1642,7 +1650,7 @@ function PageNuova({ anno, pdc, onToast }){
   const push = async (righeS)=>{
     setBusy(true);
     try{ await db.ref(`finanze/${anno}/scritture`).push({ data, descrizione:desc.trim(), righe:righeS, createdAt:new Date().toISOString() });
-      onToast("Scrittura registrata"); setImp(""); setDesc("");
+      onToast("Scrittura registrata"); setImp(""); setDesc(""); setContro("");
       setRighe([{conto:"",dare:"",avere:""},{conto:"",dare:"",avere:""}]);
     }catch(e){ alert("Errore: "+e.message); }
     setBusy(false);
@@ -1653,6 +1661,7 @@ function PageNuova({ anno, pdc, onToast }){
     if(a<=0) return alert("Importo non valido");
     if(!contoLiq) return alert("Scegli il conto (liquido)");
     if(!contro) return alert("Scegli la contropartita");
+    if(!contiAll.includes(contro)) return alert("La contropartita «"+contro+"» non è nel piano dei conti. Selezionala dall'elenco.");
     if(!desc.trim()) return alert("Aggiungi una descrizione");
     const lm=metaOf(contoLiq), cm=metaOf(contro);
     const liq=(d,av)=>({conto:contoLiq,codice:lm.codice||"",categoria:lm.categoria||"",dare:d,avere:av});
@@ -1669,6 +1678,8 @@ function PageNuova({ anno, pdc, onToast }){
     if(!quad) return alert(`La scrittura non quadra: DARE ${totD.toFixed(2)} ≠ AVERE ${totA.toFixed(2)}`);
     const valide=righe.filter(r=>r.conto&&(num(r.dare)||num(r.avere)));
     if(valide.length<2) return alert("Servono almeno 2 righe valide");
+    const sconosciuti=distinct(valide.filter(r=>!contiAll.includes(r.conto)).map(r=>r.conto));
+    if(sconosciuti.length) return alert("Conti non presenti nel piano dei conti: "+sconosciuti.join(", ")+".\nSelezionali dall'elenco.");
     push(valide.map(r=>{ const m=metaOf(r.conto); return {conto:r.conto,codice:m.codice||"",categoria:m.categoria||"",dare:num(r.dare),avere:num(r.avere)}; }));
   };
 
@@ -1819,6 +1830,30 @@ function PageRiepilogo({ movimenti }){
 }
 
 // ============================================================
+// ERROR BOUNDARY — evita lo schermo bianco se una pagina va in crash
+// ============================================================
+class PageBoundary extends React.Component{
+  constructor(p){ super(p); this.state={err:null}; }
+  static getDerivedStateFromError(err){ return {err}; }
+  componentDidCatch(err){ console.error("Errore pagina:", err); }
+  componentDidUpdate(prev){ if(prev.page!==this.props.page && this.state.err) this.setState({err:null}); }
+  render(){
+    if(this.state.err){
+      const msg = this.state.err && this.state.err.message ? this.state.err.message : String(this.state.err);
+      return (
+        <div className="card" style={{borderColor:"var(--danger)"}}>
+          <h3 className="serif" style={{marginTop:0,color:"var(--danger)"}}>Errore in questa pagina</h3>
+          <p style={{fontSize:13.5,color:"var(--ink-2)"}}>La pagina non si è caricata per un errore imprevisto. Il resto dell'app continua a funzionare.</p>
+          <pre className="mono" style={{fontSize:12,whiteSpace:"pre-wrap",background:"var(--danger-soft)",padding:12,borderRadius:8,overflow:"auto"}}>{msg}</pre>
+          <p style={{fontSize:12.5,color:"var(--ink-3)",marginBottom:0}}>Cambia pagina e rientra, oppure ricarica. Se il problema resta, segnala il testo qui sopra.</p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ============================================================
 // APP
 // ============================================================
 function App(){
@@ -1860,14 +1895,14 @@ function App(){
             <React.Fragment key={sec}>
               <div className="section-label">{sec}</div>
               {items.map(([id,ico,label])=>(
-                <button key={id} className={"navlink "+(page===id?"active":"")} onClick={()=>setPage(id)}><span className="ico">{ico}</span> {label}</button>
+                <button key={id} className={"navlink "+(page===id?"active":"")} onClick={()=>{ setPage(id); setSidebarOpen(false); }}><span className="ico">{ico}</span> {label}</button>
               ))}
             </React.Fragment>
           ))}
         </nav>
         {sidebarOpen && <div className="sidebar-backdrop" onClick={()=>setSidebarOpen(false)}></div>}
         <main className="main">
-          {loading ? <div className="empty-state">Caricamento…</div> : <>
+          {loading ? <div className="empty-state">Caricamento…</div> : <PageBoundary page={page}>
             {page==="dashboard" && <PageDashboard scritture={scritture} pdc={pdc} movimenti={movimenti} dispTarget={dispTarget} anno={anno} />}
             {page==="nuova" && <PageNuova anno={anno} pdc={pdc} onToast={showToast} />}
             {page==="riepilogo" && <PageRiepilogo movimenti={movimenti} />}
@@ -1877,7 +1912,7 @@ function App(){
             {page==="bdv" && <PageBdV scritture={scritture} pdc={pdc} />}
             {page==="cespiti" && <PageCespiti cespiti={cespiti} />}
             {page==="export" && <PageExport scritture={scritture} pdc={pdc} anno={anno} />}
-          </>}
+          </PageBoundary>}
         </main>
       </div>
       {toast && <div className={"toast "+(toast.type||"")}>{toast.msg}</div>}
