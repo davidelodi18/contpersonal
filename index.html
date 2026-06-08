@@ -218,7 +218,7 @@
   .gp-bucket-body{display:flex;flex-direction:column;gap:8px;flex:1}
   .gp-bucket-empty{font-size:12px;font-weight:700;color:#C2B4A0;text-align:center;padding:14px 6px;border:1.5px dashed #E4D7C2;border-radius:11px}
 
-  .gp-pchip{display:flex;align-items:center;gap:9px;background:#FFFDF8;border:1px solid #E4D7C2;border-radius:11px;padding:8px 10px;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;box-shadow:0 1px 3px rgba(90,74,61,.06);transition:box-shadow .12s}
+  .gp-pchip{display:flex;align-items:center;gap:9px;background:#FFFDF8;border:1px solid #E4D7C2;border-radius:11px;padding:8px 10px;cursor:pointer;touch-action:manipulation;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;box-shadow:0 1px 3px rgba(90,74,61,.06);transition:box-shadow .12s}
   .gp-pchip:active{cursor:grabbing}
   .gp-pchip .pdot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
   .gp-pchip .pbody{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
@@ -234,7 +234,7 @@
   .gp-pmini button.danger{color:#9E4444}
   .gp-pmini button.accent{color:#C75D3A;border-color:#EAC9BC;background:#FFF6ED}
   .gp-pmini button.accent:hover{background:#FCEDE5}
-  .gp-late-chip{display:inline-flex;align-items:center;gap:8px;background:#FFFDF8;border:1px solid #E8C9C9;border-radius:11px;padding:7px 11px;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;font-weight:700;font-size:13px;box-shadow:0 1px 3px rgba(90,74,61,.06)}
+  .gp-late-chip{display:inline-flex;align-items:center;gap:8px;background:#FFFDF8;border:1px solid #E8C9C9;border-radius:11px;padding:7px 11px;cursor:pointer;touch-action:manipulation;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;font-weight:700;font-size:13px;box-shadow:0 1px 3px rgba(90,74,61,.06)}
   .gp-late-chip .pdot{width:9px;height:9px;border-radius:50%}
   .gp-late-chip .od{font-size:10.5px;font-weight:800;color:#9E4444}
   .gp-late-chip .lc-btn{border:1px solid #EAC9BC;background:#FFF6ED;color:#C75D3A;border-radius:7px;width:24px;height:24px;display:grid;place-items:center;cursor:pointer;flex-shrink:0}
@@ -784,7 +784,7 @@ function PriorityView({events,bus,buMap,onEvent,onToggle,onReorder,onSetLevel,on
   const [selKey,setSelKey]=useState(()=>toDateKey(new Date()));
   const [drag,setDrag]=useState(null);            // {ev,x,y,over}
   const [menuEv,setMenuEv]=useState(null);        // task su cui aprire il menù a tocco
-  const dragRef=useRef(null), overRef=useRef(null);
+  const dragRef=useRef(null), overRef=useRef(null), justDragRef=useRef(false);
   const today=startOfDay(new Date());
   const weekDays=Array.from({length:7},(_,i)=>addDays(weekStart,i));
   const selDay=fromDateKey(selKey);
@@ -800,7 +800,7 @@ function PriorityView({events,bus,buMap,onEvent,onToggle,onReorder,onSetLevel,on
   const pool=selEvents.filter((e)=>!e.priorityLevel);
   const countFor=(d)=>onDay(d).filter((e)=>!e.done).length;
 
-  /* ---- drag (mouse + touch via Pointer Events) ---- */
+  /* ---- drag SOLO da mouse/desktop (su touch si usa il tap → menù) ---- */
   const findDrop=(x,y)=>{const el=document.elementFromPoint(x,y);const z=el&&el.closest&&el.closest("[data-drop]");return z?z.getAttribute("data-drop"):null;};
   const endDrag=()=>{
     window.removeEventListener("pointermove",onPointerMove);
@@ -808,8 +808,8 @@ function PriorityView({events,bus,buMap,onEvent,onToggle,onReorder,onSetLevel,on
     window.removeEventListener("pointercancel",onPointerCancel);
   };
   const onPointerDown=(e,ev)=>{
+    if(e.pointerType&&e.pointerType!=="mouse")return; // touch/penna: lascia gestire al click nativo
     if(e.button!==undefined&&e.button!==0)return;
-    if(e.pointerType&&e.pointerType!=="mouse"&&e.cancelable)e.preventDefault(); // niente scroll/menù iOS
     dragRef.current={ev,sx:e.clientX,sy:e.clientY,moved:false};
     window.addEventListener("pointermove",onPointerMove,{passive:false});
     window.addEventListener("pointerup",onPointerUp);
@@ -824,8 +824,7 @@ function PriorityView({events,bus,buMap,onEvent,onToggle,onReorder,onSetLevel,on
   };
   const onPointerUp=()=>{
     endDrag();const d=dragRef.current;dragRef.current=null;
-    if(d&&d.moved){const over=overRef.current;if(over)handleDrop(d.ev,over);}
-    else if(d){setMenuEv(d.ev);} // tocco semplice → apre il menù per scegliere a mano
+    if(d&&d.moved){const over=overRef.current;if(over)handleDrop(d.ev,over);justDragRef.current=true;setTimeout(()=>{justDragRef.current=false;},350);}
     overRef.current=null;setDrag(null);
   };
   const onPointerCancel=()=>{endDrag();dragRef.current=null;overRef.current=null;setDrag(null);};
@@ -850,7 +849,7 @@ function PriorityView({events,bus,buMap,onEvent,onToggle,onReorder,onSetLevel,on
   const Chip=({ev,idx,arr,bucketKey})=>{
     const bu=ev.buId&&buMap[ev.buId]?buMap[ev.buId]:null;const s=new Date(ev.start);
     return (
-      <div className={`gp-pchip ${ev.done?"done":""}`} onPointerDown={(e)=>onPointerDown(e,ev)} title="Trascina oppure tocca per assegnare">
+      <div className={`gp-pchip ${ev.done?"done":""}`} onPointerDown={(e)=>onPointerDown(e,ev)} onClick={()=>{if(justDragRef.current)return;setMenuEv(ev);}} title="Tocca per scegliere dove metterla (o trascina col mouse)">
         <div className={`gp-check ${ev.done?"on":""}`} onPointerDown={(e)=>e.stopPropagation()} onClick={(e)=>{e.stopPropagation();onToggle(ev);}}>{ev.done&&<Icon name="check" size={11} style={{color:"#fff"}}/>}</div>
         <span className="pdot" style={{background:ev.color}}/>
         <div className="pbody">
@@ -888,7 +887,7 @@ function PriorityView({events,bus,buMap,onEvent,onToggle,onReorder,onSetLevel,on
 
       <div style={{display:"flex",alignItems:"center",gap:8,background:"#FFF6ED",border:"1px solid #EAD7C2",borderRadius:12,padding:"9px 12px",fontSize:12.5,fontWeight:700,color:"#8A6A50",marginBottom:14,lineHeight:1.45}}>
         <Icon name="move" size={16} style={{flexShrink:0,color:"#C75D3A"}}/>
-        <span>Per assegnare una priorità <b>tocca un'attività</b> e scegli il riquadro o il giorno. In alternativa <b>trascinala</b> in un riquadro (o su un giorno per riprogrammarla).</span>
+        <span>Per assegnare una priorità <b>tocca un'attività</b>: si apre un menù dove scegli il riquadro o il giorno dove metterla. Da computer puoi anche <b>trascinarla</b> col mouse.</span>
       </div>
 
       <div className="gp-daychips">
@@ -906,7 +905,7 @@ function PriorityView({events,bus,buMap,onEvent,onToggle,onReorder,onSetLevel,on
           <div className="gp-late-hint">Tocca un'attività e scegli il giorno (o trascinala su un giorno qui sopra) per riprogrammarla.</div>
           <div className="gp-late-list">
             {overdue.map((ev)=>{const e=new Date(ev.end);
-              return (<div key={ev.id} className="gp-late-chip" onPointerDown={(e2)=>onPointerDown(e2,ev)} title="Trascina su un giorno oppure tocca per spostare">
+              return (<div key={ev.id} className="gp-late-chip" onPointerDown={(e2)=>onPointerDown(e2,ev)} onClick={()=>{if(justDragRef.current)return;setMenuEv(ev);}} title="Tocca per scegliere il giorno (o trascina col mouse)">
                 <span className="pdot" style={{background:ev.color}}/>{ev.title}
                 <span className="od">scad. {e.getDate()} {MONTHS[e.getMonth()].slice(0,3)}</span>
                 <button className="lc-btn" onPointerDown={(e2)=>e2.stopPropagation()} onClick={(e2)=>{e2.stopPropagation();setMenuEv(ev);}} title="Assegna / sposta"><Icon name="move" size={13}/></button>
