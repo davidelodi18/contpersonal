@@ -1591,20 +1591,85 @@ function PageCespiti({cespiti,setCespiti,toast}){
 /* ============================================================
    PAGINA: AMMORTAMENTI
    ============================================================ */
-function PageAmmortamenti({cespiti}){
+/* mappa conti di ammortamento per "classe" normalizzata */
+function normKey(s){ return String(s||'').toUpperCase().replace(/\./g,' ').replace(/-/g,' ').replace(/\s+/g,' ').trim(); }
+const AMM_COST = {}, AMM_FONDO = {};
+CONTI.forEach(c=>{
+  const up=c.nome.toUpperCase();
+  if(c.categoria==='COSTI' && up.startsWith('AMMORTAMENTO')) AMM_COST[normKey(up.replace(/^AMMORTAMENTO/,''))]=c.codice;
+  if(c.categoria==='RETTIFICA ATTIVO' && /^F\.?\s*AMMORTAMENTO/.test(up)) AMM_FONDO[normKey(up.replace(/^F\.?\s*AMMORTAMENTO/,''))]=c.codice;
+});
+
+function PageAmmortamenti({cespiti, onAdd, updateCespiti, toast}){
+  const [anno,setAnno]=useState(new Date().getFullYear());
   const piano = cespiti.map(c=>{
-    const quota = r2((c.costoStorico||0)*(c.aliquota||0));
+    const quotaTeorica = r2((c.costoStorico||0)*(c.aliquota||0));
     const vn = r2((c.costoStorico||0)-(c.fondo||0));
+    const quota = r2(Math.min(quotaTeorica, Math.max(vn,0)));   // non oltre il residuo
     const annoFine = (c.aliquota>0 && c.annoIni) ? c.annoIni + Math.ceil(1/c.aliquota) - 1 : null;
-    const residuo = vn>0;
-    return {...c,quota,vn,annoFine,residuo};
+    const residuo = vn>0.005;
+    const k = normKey(c.classe);
+    return {...c, quota, vn, annoFine, residuo, costCode:AMM_COST[k], fondoCode:AMM_FONDO[k]};
   });
   const totQuota=r2(piano.reduce((s,p)=>s+(p.residuo?p.quota:0),0));
   const totVN=r2(piano.reduce((s,p)=>s+p.vn,0));
 
+  // anteprima scrittura: solo cespiti con quota>0 e conti collegati
+  const daAmmortare = piano.filter(p=>p.residuo && p.quota>0.005);
+  const collegati = daAmmortare.filter(p=>p.costCode && p.fondoCode);
+  const scollegati = daAmmortare.filter(p=>!p.costCode || !p.fondoCode);
+  const quotaScrittura = r2(collegati.reduce((s,p)=>s+p.quota,0));
+
+  function generaScrittura(){
+    if(collegati.length===0){ toast('Nessun cespite ammortizzabile collegato','error'); return; }
+    if(!window.confirm(`Registrare l'ammortamento ${anno} per ${eur(quotaScrittura)} e aggiornare i fondi dei ${collegati.length} cespiti collegati?`)) return;
+    // aggrega per conto (più cespiti possono condividere gli stessi conti)
+    const dare={}, avere={};
+    collegati.forEach(p=>{ dare[p.costCode]=r2((dare[p.costCode]||0)+p.quota); avere[p.fondoCode]=r2((avere[p.fondoCode]||0)+p.quota); });
+    const righe=[ ...Object.entries(dare).map(([c,d])=>({c:parseInt(c),d,a:0})),
+                  ...Object.entries(avere).map(([c,a])=>({c:parseInt(c),d:0,a})) ];
+    onAdd({id:uid(),data:`${anno}-12-31`,descr:`Ammortamento esercizio ${anno}`,righe,origine:'manuale',tipo:'contabile'});
+    // aggiorna i fondi sui cespiti collegati
+    const ids=new Set(collegati.map(p=>p.id));
+    updateCespiti(cespiti.map(c=>{
+      if(!ids.has(c.id)) return c;
+      const p=collegati.find(x=>x.id===c.id);
+      return {...c, fondo:r2((c.fondo||0)+p.quota)};
+    }));
+    toast('Scrittura di ammortamento registrata','success');
+  }
+
   return (
     <div>
       <PageHead title="Piano di Ammortamento" sub="Quote d'esercizio e valore residuo"/>
+
+      <div className="card" style={{marginBottom:22}}>
+        <div className="card-title">Genera scrittura di ammortamento di fine anno</div>
+        <div style={{display:'flex',gap:14,alignItems:'flex-end',flexWrap:'wrap'}}>
+          <div className="form-row" style={{maxWidth:140}}>
+            <label>Esercizio</label>
+            <input type="number" value={anno} onChange={e=>setAnno(parseInt(e.target.value)||anno)}/>
+          </div>
+          <div style={{flex:1,minWidth:220,background:'var(--panel-2)',borderRadius:6,padding:'10px 14px',fontSize:13,color:'var(--ink-2)'}}>
+            Quota da registrare: <b>{eur(quotaScrittura)}</b> · cespiti collegati: <b>{collegati.length}</b>
+            {scollegati.length>0 && <div style={{color:'var(--warn)',marginTop:4,fontSize:12}}>⚠ {scollegati.length} senza conto collegato (esclusi): {scollegati.map(p=>p.nome).join(', ')}</div>}
+          </div>
+          <button className="btn accent" onClick={generaScrittura} disabled={collegati.length===0}>Registra 31/12/{anno}</button>
+        </div>
+        {collegati.length>0 && <div className="tbl-wrap" style={{marginTop:14}}>
+          <table className="tbl">
+            <thead><tr><th>Cespite</th><th>Conto costo (Dare)</th><th>Fondo (Avere)</th><th className="num">Quota</th></tr></thead>
+            <tbody>
+              {collegati.map(p=>(
+                <tr key={p.id}><td>{p.nome}</td><td style={{fontSize:12}}>{contoByCode[p.costCode].nome}</td>
+                  <td style={{fontSize:12}}>{contoByCode[p.fondoCode].nome}</td><td className="num">{num2(p.quota)}</td></tr>
+              ))}
+            </tbody>
+            <tfoot><tr><td colSpan="3" style={{fontWeight:600}}>Totale</td><td className="num" style={{fontWeight:600}}>{num2(quotaScrittura)}</td></tr></tfoot>
+          </table>
+        </div>}
+      </div>
+
       <div className="kpi-grid">
         <Kpi accent label="Quota ammortamento esercizio" value={eur(totQuota)} hint="Beni ancora da ammortizzare"/>
         <Kpi label="Valore netto residuo" value={eur(totVN)}/>
@@ -1810,7 +1875,7 @@ function App(){
           {page==='rendiconto' && <PageRendiconto/>}
           {page==='pianoconti' && <PagePianoConti saldi={saldi}/>}
           {page==='cespiti' && <PageCespiti cespiti={cespiti} setCespiti={updateCespiti} toast={showToast}/>}
-          {page==='ammortamenti' && <PageAmmortamenti cespiti={cespiti}/>}
+          {page==='ammortamenti' && <PageAmmortamenti cespiti={cespiti} onAdd={addScrittura} updateCespiti={updateCespiti} toast={showToast}/>}
         </div>
       </div>
       <Toast msg={toast.msg} kind={toast.kind}/>
