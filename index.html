@@ -1304,10 +1304,71 @@ function PageMovimenti({scritture, saldi}){
   );
 }
 
+/* ---- editor scrittura (modifica/elimina) ---- */
+function ScritturaEditor({scrittura,onSave,onDelete,onClose,toast}){
+  const [data,setData]=useState(scrittura.data||todayISO());
+  const [descr,setDescr]=useState(scrittura.descr||'');
+  const [righe,setRighe]=useState(scrittura.righe.map(r=>({c:r.c||'',d:r.d||'',a:r.a||''})));
+  const setRiga=(i,k,v)=>setRighe(rs=>rs.map((r,j)=>j===i?{...r,[k]:v}:r));
+  const addRiga=()=>setRighe(rs=>[...rs,{c:'',d:'',a:''}]);
+  const delRiga=i=>setRighe(rs=>rs.filter((_,j)=>j!==i));
+  const totD=r2(righe.reduce((s,r)=>s+(parseFloat(r.d)||0),0));
+  const totA=r2(righe.reduce((s,r)=>s+(parseFloat(r.a)||0),0));
+  const quadra=Math.abs(totD-totA)<0.005 && totD>0;
+  function save(){
+    if(!data){ toast('Inserisci la data','error'); return; }
+    if(!quadra){ toast('La scrittura non quadra (Dare ≠ Avere)','error'); return; }
+    const rr=righe.filter(r=>r.c&&((parseFloat(r.d)||0)>0||(parseFloat(r.a)||0)>0))
+                  .map(r=>({c:parseInt(r.c),d:r2(parseFloat(r.d)||0),a:r2(parseFloat(r.a)||0)}));
+    if(rr.length<2){ toast('Servono almeno due righe valide','error'); return; }
+    onSave({data,descr:descr||'(senza descrizione)',righe:rr});
+  }
+  return (
+    <div className="modal-bg" onClick={e=>{if(e.target.className==='modal-bg')onClose();}}>
+      <div className="modal" style={{maxWidth:680}}>
+        <div className="modal-head"><h3>Modifica scrittura</h3><button className="btn ghost sm" onClick={onClose}>✕</button></div>
+        <div className="modal-body"><div className="form-grid">
+          <div className="form-row"><label>Data</label><input type="date" value={data} onChange={e=>setData(e.target.value)}/></div>
+          <div className="form-row"><label>Descrizione</label><input type="text" value={descr} onChange={e=>setDescr(e.target.value)}/></div>
+          <div className="tbl-wrap">
+            <table className="tbl">
+              <thead><tr><th>Conto</th><th className="num">Dare</th><th className="num">Avere</th><th></th></tr></thead>
+              <tbody>
+                {righe.map((r,i)=>(
+                  <tr key={i}>
+                    <td><ContoSelect value={r.c} onChange={v=>setRiga(i,'c',v)}/></td>
+                    <td className="num"><input type="number" step="0.01" value={r.d} onChange={e=>setRiga(i,'d',e.target.value)} style={{textAlign:'right'}}/></td>
+                    <td className="num"><input type="number" step="0.01" value={r.a} onChange={e=>setRiga(i,'a',e.target.value)} style={{textAlign:'right'}}/></td>
+                    <td><button className="btn ghost sm" onClick={()=>delRiga(i)} disabled={righe.length<=2}>✕</button></td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot><tr><td style={{fontWeight:600}}>Totali</td>
+                <td className="num" style={{fontWeight:600}}>{num2(totD)}</td>
+                <td className="num" style={{fontWeight:600}}>{num2(totA)}</td>
+                <td className="num" style={{color:quadra?'var(--success)':'var(--danger)',fontWeight:600}}>{quadra?'✓':'≠'}</td>
+              </tr></tfoot>
+            </table>
+          </div>
+          <button className="btn ghost sm" onClick={addRiga} style={{alignSelf:'flex-start'}}>+ Aggiungi riga</button>
+        </div></div>
+        <div className="modal-foot" style={{justifyContent:'space-between'}}>
+          <button className="btn danger" onClick={()=>{ if(window.confirm('Eliminare questa scrittura?')) onDelete(); }}>Elimina</button>
+          <div style={{display:'flex',gap:8}}>
+            <button className="btn ghost" onClick={onClose}>Annulla</button>
+            <button className="btn accent" onClick={save}>Salva</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ============================================================
    PAGINA: LIBRO GIORNALE
    ============================================================ */
-function PageLibroGiornale({scritture}){
+function PageLibroGiornale({scritture, onUpdate, onDelete, toast}){
+  const [editing,setEditing]=useState(null);
   const [q,setQ]=useState('');
   const [fAnno,setFAnno]=useState('');
   const anni=[...new Set(scritture.map(s=>(s.data||'').slice(0,4)).filter(Boolean))].sort();
@@ -1335,7 +1396,10 @@ function PageLibroGiornale({scritture}){
                 <React.Fragment key={s.id}>
                   <tr className="gj-head">
                     <td>{fmtDate(s.data)}</td>
-                    <td><b>{s.descr}</b> <span className={'pill '+(s.tipo==='giroconto'?'giroconto':'')} style={{marginLeft:6}}>{s.origine==='manuale'?(s.tipo==='giroconto'?'giroconto':'manuale'):'libro'}</span>{!ok&&<span className="pill" style={{background:'#f3dada',color:'#a33',marginLeft:6}}>non quadra</span>}</td>
+                    <td>
+                      <b>{s.descr}</b> <span className={'pill '+(s.tipo==='giroconto'?'giroconto':'')} style={{marginLeft:6}}>{s.origine==='manuale'?(s.tipo==='giroconto'?'giroconto':'manuale'):'libro'}</span>{!ok&&<span className="pill" style={{background:'#f3dada',color:'#a33',marginLeft:6}}>non quadra</span>}
+                      <button className="btn ghost sm" style={{marginLeft:8}} onClick={()=>setEditing(s)}>✎ Modifica</button>
+                    </td>
                     <td className="num"></td><td className="num"></td>
                   </tr>
                   {s.righe.map((r,i)=>(
@@ -1353,6 +1417,10 @@ function PageLibroGiornale({scritture}){
           <tfoot><tr><td colSpan="2" style={{fontWeight:600}}>Totali</td><td className="num" style={{fontWeight:600}}>{num2(totD)}</td><td className="num" style={{fontWeight:600}}>{num2(totA)}</td></tr></tfoot>
         </table>
       </div>
+      {editing && <ScritturaEditor scrittura={editing} toast={toast}
+        onSave={patch=>{ onUpdate(editing.id,patch); setEditing(null); toast('Scrittura aggiornata','success'); }}
+        onDelete={()=>{ onDelete(editing.id); setEditing(null); toast('Scrittura eliminata','success'); }}
+        onClose={()=>setEditing(null)}/>}
     </div>
   );
 }
@@ -2114,6 +2182,17 @@ function App({authUser, onLogout}){
     if(firebaseReady){ const {id,...rest}=s; db.ref('scritture/'+id).set(rest); }
     else setScritture(arr=>{ const n=[...arr,s]; saveScritture(n); return n; });
   };
+  const updateScrittura = (id,patch) => {
+    if(firebaseReady){
+      const cur=scritture.find(s=>s.id===id)||{};
+      const {id:_,...rest}={...cur,...patch};
+      db.ref('scritture/'+id).set(rest);
+    } else setScritture(arr=>{ const n=arr.map(s=>s.id===id?{...s,...patch}:s); saveScritture(n); return n; });
+  };
+  const deleteScrittura = id => {
+    if(firebaseReady){ db.ref('scritture/'+id).remove(); }
+    else setScritture(arr=>{ const n=arr.filter(s=>s.id!==id); saveScritture(n); return n; });
+  };
   const updateCespiti = arr => {
     if(firebaseReady){ const obj={}; arr.forEach(c=>{ const {id,...rest}=c; obj[id]=rest; }); db.ref('cespiti').set(obj); }
     else { setCespiti(arr); saveCespiti(arr); }
@@ -2163,7 +2242,7 @@ function App({authUser, onLogout}){
         <div className="main">
           {page==='dashboard' && <PageDashboard scritture={scritture} saldi={saldi} goto={nav}/>}
           {page==='nuova' && <PageNuova onAdd={addScrittura} toast={showToast}/>}
-          {page==='giornale' && <PageLibroGiornale scritture={scritture}/>}
+          {page==='giornale' && <PageLibroGiornale scritture={scritture} onUpdate={updateScrittura} onDelete={deleteScrittura} toast={showToast}/>}
           {page==='movimenti' && <PageMovimenti scritture={scritture} saldi={saldi}/>}
           {page==='pivot' && <PagePivotConti saldi={saldi}/>}
           {page==='bilancio' && <PageBilancio saldi={saldi}/>}
