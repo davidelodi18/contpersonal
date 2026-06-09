@@ -12,7 +12,10 @@
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 
@@ -786,6 +789,33 @@
   .rf-compact table.tbl th { padding: 6px 7px; font-size: 9px; letter-spacing: .02em; }
   .rf-compact table.tbl td { padding: 5px 7px; }
   .rf-compact table.tbl td.num, .rf-compact table.tbl th.num { font-size: 10.5px; }
+
+/* ---- estensioni tabelle nuove sezioni ---- */
+.tbl-wrap{ overflow-x:auto; }
+
+/* Libro giornale */
+.tbl.giornale .gj-head td{ background:var(--panel-2); border-top:2px solid var(--line); padding-top:10px; }
+.tbl.giornale .gj-row td{ border-top:1px solid var(--line-2,#eee); color:var(--ink-2); }
+
+/* Pivot raggruppabile */
+.tbl.pivot .pv-group{ cursor:pointer; background:var(--panel-2); }
+.tbl.pivot .pv-group:hover{ background:var(--accent-soft); }
+.tbl.pivot .pv-group td{ border-top:1px solid var(--line); }
+.tbl.pivot .pv-row td{ color:var(--ink-2); }
+
+/* Matrice rendiconto */
+.tbl.rf-matrix{ min-width:560px; }
+.tbl.rf-matrix th.rf-voce, .tbl.rf-matrix td.rf-voce{ position:sticky; left:0; background:var(--panel); text-align:left; z-index:1; min-width:190px; }
+.tbl.rf-matrix .rf-group{ cursor:pointer; }
+.tbl.rf-matrix .rf-group td{ background:var(--panel-2); font-weight:600; }
+.tbl.rf-matrix .rf-group td.rf-voce{ background:var(--panel-2); }
+.tbl.rf-matrix .rf-group:hover td{ background:var(--accent-soft); }
+.tbl.rf-matrix .rf-row td.rf-voce.sub{ padding-left:22px; color:var(--ink-2); font-weight:400; }
+.tbl.rf-matrix .rf-row td{ color:var(--ink-2); }
+.tbl.rf-matrix .rf-tot td{ font-weight:600; border-top:1px solid var(--line); }
+.tbl.rf-matrix .rf-tot td.rf-voce{ font-weight:600; }
+.tbl.rf-matrix .rf-tot.strong td{ font-weight:700; border-top:2px solid var(--line); background:var(--accent-soft); }
+.tbl.rf-matrix .rf-tot.strong td.rf-voce{ background:var(--accent-soft); }
 </style>
 </head>
 <body>
@@ -809,11 +839,12 @@ const FIREBASE_CONFIG = {
 /* Password d'accesso all'app. Cambiala con la tua. */
 const APP_PASSWORD = "cambiami";
 
-let db = null, firebaseReady = false;
+let db = null, auth = null, firebaseReady = false;
 try {
   if (FIREBASE_CONFIG.apiKey !== "TODO" && window.firebase) {
     firebase.initializeApp(FIREBASE_CONFIG);
     db = firebase.database();
+    try { auth = firebase.auth(); } catch(e){ auth = null; }
     firebaseReady = true;
   }
 } catch (e) { console.warn("Firebase non inizializzato:", e); }
@@ -1015,9 +1046,10 @@ function PageNuova({onAdd, toast}){
   const [mode,setMode] = useState('liquidita'); // liquidita | contabile
   const [data,setData] = useState(todayISO());
   const [descr,setDescr] = useState('');
-  // modalità liquidità
-  const [verso,setVerso] = useState('U'); // E entrata, U uscita
-  const [contoLiq,setContoLiq] = useState(1);
+  // modalità liquidità: verso = E entrata | U uscita | G giroconto
+  const [verso,setVerso] = useState('U');
+  const [contoLiq,setContoLiq] = useState(1);     // conto liquidità (E/U) o conto DA (G)
+  const [contoLiqA,setContoLiqA] = useState(3);   // conto AL (solo giroconto)
   const [contropartita,setContropartita] = useState('');
   const [importo,setImporto] = useState('');
   // modalità contabile libera
@@ -1033,21 +1065,27 @@ function PageNuova({onAdd, toast}){
 
   function submit(){
     if(!data){ toast('Inserisci la data','error'); return; }
-    let nuove=[];
+    let nuove=[], tipo=mode;
     if(mode==='liquidita'){
       const imp = parseFloat(importo);
       if(!imp||imp<=0){ toast('Importo non valido','error'); return; }
-      if(!contropartita){ toast('Seleziona la contropartita','error'); return; }
-      if(verso==='E') nuove=[{c:contoLiq,d:imp,a:0},{c:contropartita,d:0,a:imp}];
-      else            nuove=[{c:contropartita,d:imp,a:0},{c:contoLiq,d:0,a:imp}];
+      if(verso==='G'){
+        if(contoLiq===contoLiqA){ toast('I due conti devono essere diversi','error'); return; }
+        nuove=[{c:contoLiqA,d:imp,a:0},{c:contoLiq,d:0,a:imp}]; tipo='giroconto';
+      } else {
+        if(!contropartita){ toast('Seleziona la contropartita','error'); return; }
+        if(verso==='E') nuove=[{c:contoLiq,d:imp,a:0},{c:contropartita,d:0,a:imp}];
+        else            nuove=[{c:contropartita,d:imp,a:0},{c:contoLiq,d:0,a:imp}];
+      }
     } else {
       if(!quadra){ toast('La scrittura non quadra (Dare ≠ Avere)','error'); return; }
       nuove = righe.filter(r=>r.c&&((parseFloat(r.d)||0)>0||(parseFloat(r.a)||0)>0))
                    .map(r=>({c:parseInt(r.c),d:r2(parseFloat(r.d)||0),a:r2(parseFloat(r.a)||0)}));
       if(nuove.length<2){ toast('Servono almeno due righe valide','error'); return; }
     }
-    onAdd({id:uid(),data,descr:descr||'(senza descrizione)',righe:nuove,origine:'manuale',tipo:mode});
-    toast('Scrittura registrata','success');
+    const defDescr = verso==='G' ? `Giroconto ${contoByCode[contoLiq].nome} → ${contoByCode[contoLiqA].nome}` : '(senza descrizione)';
+    onAdd({id:uid(),data,descr:descr||defDescr,righe:nuove,origine:'manuale',tipo});
+    toast(verso==='G'?'Giroconto registrato':'Scrittura registrata','success');
     setDescr(''); setImporto(''); setContropartita('');
     setRighe([{c:'',d:'',a:''},{c:'',d:'',a:''}]);
   }
@@ -1062,16 +1100,20 @@ function PageNuova({onAdd, toast}){
         </div>
 
         <div className="form-grid">
+          {mode==='liquidita' && <>
+            <div className="form-row"><label>Tipo movimento</label>
+              <div className="tipo-switch" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
+                <button className={verso==='E'?'active entrata':''} onClick={()=>setVerso('E')}>Entrata</button>
+                <button className={verso==='U'?'active uscita':''} onClick={()=>setVerso('U')}>Uscita</button>
+                <button className={verso==='G'?'active giroconto':''} onClick={()=>setVerso('G')}>Giroconto</button>
+              </div>
+            </div>
+          </>}
+
           <div className="form-row"><label>Data <span className="req">*</span></label><input type="date" value={data} onChange={e=>setData(e.target.value)}/></div>
           <div className="form-row"><label>Descrizione</label><input type="text" value={descr} onChange={e=>setDescr(e.target.value)} placeholder="Es. Stipendio, spesa supermercato…"/></div>
 
-          {mode==='liquidita' && <>
-            <div className="form-row"><label>Tipo</label>
-              <div className="tipo-switch">
-                <button className={verso==='E'?'active entrata':''} onClick={()=>setVerso('E')}>Entrata</button>
-                <button className={verso==='U'?'active uscita':''} onClick={()=>setVerso('U')}>Uscita</button>
-              </div>
-            </div>
+          {mode==='liquidita' && verso!=='G' && <>
             <div className="form-row"><label>Conto liquidità <span className="req">*</span></label>
               <ContoSelect value={contoLiq} onChange={setContoLiq} filter={c=>c.categoria==='DISP. LIQUIDE'}/>
             </div>
@@ -1083,6 +1125,19 @@ function PageNuova({onAdd, toast}){
               {verso==='E'
                 ? <>Dare <b>{contoByCode[contoLiq]?.nome}</b> · Avere <b>{contropartita?contoByCode[contropartita]?.nome:'…'}</b></>
                 : <>Dare <b>{contropartita?contoByCode[contropartita]?.nome:'…'}</b> · Avere <b>{contoByCode[contoLiq]?.nome}</b></>}
+            </div>
+          </>}
+
+          {mode==='liquidita' && verso==='G' && <>
+            <div className="form-row"><label>Dal conto <span className="req">*</span></label>
+              <ContoSelect value={contoLiq} onChange={setContoLiq} filter={c=>c.categoria==='DISP. LIQUIDE'}/>
+            </div>
+            <div className="form-row"><label>Al conto <span className="req">*</span></label>
+              <ContoSelect value={contoLiqA} onChange={setContoLiqA} filter={c=>c.categoria==='DISP. LIQUIDE'}/>
+            </div>
+            <div className="form-row"><label>Importo <span className="req">*</span></label><input type="number" step="0.01" value={importo} onChange={e=>setImporto(e.target.value)} placeholder="0,00"/></div>
+            <div style={{background:'var(--panel-2)',borderRadius:6,padding:'12px 14px',fontSize:12.5,color:'var(--ink-2)'}}>
+              Dare <b>{contoByCode[contoLiqA]?.nome}</b> · Avere <b>{contoByCode[contoLiq]?.nome}</b>
             </div>
           </>}
 
@@ -1112,7 +1167,7 @@ function PageNuova({onAdd, toast}){
           </>}
 
           <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:8}}>
-            <button className="btn accent" onClick={submit}>Registra scrittura</button>
+            <button className="btn accent" onClick={submit}>{verso==='G'&&mode==='liquidita'?'Registra giroconto':'Registra scrittura'}</button>
           </div>
         </div>
       </div>
@@ -1121,70 +1176,36 @@ function PageNuova({onAdd, toast}){
 }
 
 /* ============================================================
-   PAGINA: GIROCONTI
-   ============================================================ */
-function PageGiroconti({onAdd, toast, scritture}){
-  const [data,setData]=useState(todayISO());
-  const [da,setDa]=useState(1);
-  const [a,setA]=useState(3);
-  const [importo,setImporto]=useState('');
-  const [descr,setDescr]=useState('');
-
-  function submit(){
-    const imp=parseFloat(importo);
-    if(!imp||imp<=0){toast('Importo non valido','error');return;}
-    if(da===a){toast('I due conti devono essere diversi','error');return;}
-    onAdd({id:uid(),data,descr:descr||`Giroconto ${contoByCode[da].nome} → ${contoByCode[a].nome}`,
-      righe:[{c:a,d:imp,a:0},{c:da,d:0,a:imp}],origine:'manuale',tipo:'giroconto'});
-    toast('Giroconto registrato','success'); setImporto(''); setDescr('');
-  }
-  const giroconti = scritture.filter(s=>s.tipo==='giroconto').sort((x,y)=>y.data.localeCompare(x.data));
-
-  return (
-    <div>
-      <PageHead title="Giroconti" sub="Trasferimenti tra conti di liquidità"/>
-      <div className="card" style={{maxWidth:640,marginBottom:24}}>
-        <div className="form-grid">
-          <div className="form-row"><label>Data</label><input type="date" value={data} onChange={e=>setData(e.target.value)}/></div>
-          <div className="form-row"><label>Dal conto</label><ContoSelect value={da} onChange={setDa} filter={c=>c.categoria==='DISP. LIQUIDE'}/></div>
-          <div className="form-row"><label>Al conto</label><ContoSelect value={a} onChange={setA} filter={c=>c.categoria==='DISP. LIQUIDE'}/></div>
-          <div className="form-row"><label>Importo</label><input type="number" step="0.01" value={importo} onChange={e=>setImporto(e.target.value)} placeholder="0,00"/></div>
-          <div className="form-row"><label>Descrizione</label><input type="text" value={descr} onChange={e=>setDescr(e.target.value)} placeholder="(opzionale)"/></div>
-          <div style={{background:'var(--panel-2)',borderRadius:6,padding:'12px 14px',fontSize:12.5,color:'var(--ink-2)'}}>
-            Dare <b>{contoByCode[a]?.nome}</b> · Avere <b>{contoByCode[da]?.nome}</b>
-          </div>
-          <div style={{display:'flex',justifyContent:'flex-end'}}><button className="btn" style={{background:'var(--gold)',borderColor:'var(--gold)'}} onClick={submit}>Registra giroconto</button></div>
-        </div>
-      </div>
-
-      <div className="card-title serif" style={{fontSize:16,marginBottom:10}}>Giroconti registrati</div>
-      <div className="tbl-wrap">
-        <table className="tbl">
-          <thead><tr><th>Data</th><th>Descrizione</th><th>Da</th><th>A</th><th className="num">Importo</th></tr></thead>
-          <tbody>
-            {giroconti.length===0 && <tr><td colSpan="5" className="empty-state">Nessun giroconto</td></tr>}
-            {giroconti.map(g=>{
-              const da=g.righe.find(r=>r.a>0), a=g.righe.find(r=>r.d>0);
-              return <tr key={g.id}><td>{fmtDate(g.data)}</td><td>{g.descr}</td>
-                <td>{contoByCode[da?.c]?.nome}</td><td>{contoByCode[a?.c]?.nome}</td>
-                <td className="num">{eur(a?.d)}</td></tr>;
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================
-   PAGINA: MOVIMENTI & RICONCILIAZIONE
+   PAGINA: MOVIMENTI  (riepilogo di TUTTI i movimenti)
    ============================================================ */
 function PageMovimenti({scritture, saldi}){
-  const [tab,setTab] = useState('riconc'); // riconc | giornale | cassa
-  const [fMese,setFMese] = useState('');
+  const [tab,setTab] = useState('tutti'); // tutti | cassa | riconc
   const [fConto,setFConto] = useState('');
+  const [fTipo,setFTipo] = useState('');
+  const [q,setQ] = useState('');
+  const [fMese,setFMese] = useState('');
+  const [fContoCassa,setFContoCassa] = useState('');
 
-  // --- riconciliazione contabile vs reale (conti liquidità) ---
+  // --- TUTTI I MOVIMENTI: una riga per ogni movimento di conto del libro giornale ---
+  const tutte = useMemo(()=>{
+    const out=[];
+    scritture.forEach(s=> s.righe.forEach((r,i)=>{
+      out.push({key:s.id+'_'+i, data:s.data, descr:s.descr, tipo:s.tipo, origine:s.origine, c:r.c, d:r.d||0, a:r.a||0});
+    }));
+    return out.sort((x,y)=> (y.data||'').localeCompare(x.data||''));
+  },[scritture]);
+  const contiUsati = useMemo(()=>{ const set=new Set(); tutte.forEach(m=>set.add(m.c)); return [...set].sort((a,b)=>a-b); },[tutte]);
+  const movFilt = tutte.filter(m=>(!fConto||String(m.c)===fConto)&&(!fTipo||m.tipo===fTipo)
+      &&(!q || (m.descr||'').toLowerCase().includes(q.toLowerCase()) || (contoByCode[m.c]?.nome||'').toLowerCase().includes(q.toLowerCase())));
+  const totD=r2(movFilt.reduce((s,m)=>s+m.d,0)), totA=r2(movFilt.reduce((s,m)=>s+m.a,0));
+
+  // --- CASSA (movimenti reali importati) ---
+  const cassaFilt = MOVIMENTI.filter(m=>(!fMese||m.mese===fMese)&&(!fContoCassa||String(m.cod)===fContoCassa))
+    .sort((a,b)=>MESI_ORD.indexOf(a.mese)-MESI_ORD.indexOf(b.mese));
+  const cassaE=r2(cassaFilt.filter(m=>m.tipo==='E').reduce((s,m)=>s+m.imp,0));
+  const cassaU=r2(cassaFilt.filter(m=>m.tipo==='U').reduce((s,m)=>s+m.imp,0));
+
+  // --- RICONCILIAZIONE ---
   const ric = LIQ_CODES.map(cod=>{
     const c=contoByCode[cod];
     const contabile = saldi[cod]?saldi[cod].saldo:0;
@@ -1195,27 +1216,73 @@ function PageMovimenti({scritture, saldi}){
     return {cod,nome:c.nome,contabile,ini,e,u,reale,diff:r2(reale-contabile)};
   });
   const totDiff = r2(ric.reduce((s,x)=>s+x.diff,0));
-
-  // movimenti di cassa filtrati
-  const movFilt = MOVIMENTI.filter(m=>(!fMese||m.mese===fMese)&&(!fConto||String(m.cod)===fConto))
-    .sort((a,b)=>MESI_ORD.indexOf(a.mese)-MESI_ORD.indexOf(b.mese));
-
-  // giornale come elenco righe (per scrittura)
-  const scrSorted = [...scritture].sort((a,b)=>b.data.localeCompare(a.data));
+  const tipoLabel = t => t==='giroconto'?'giroconto':t==='liquidita'?'liquidità':t==='contabile'?'contabile':t;
 
   return (
     <div>
-      <PageHead title="Movimenti & Riconciliazione" sub="Allineamento tra libro giornale e movimenti reali di cassa"/>
+      <PageHead title="Movimenti" sub="Riepilogo di tutti i movimenti registrati"/>
       <div className="tipo-switch" style={{gridTemplateColumns:'1fr 1fr 1fr',maxWidth:560,marginBottom:22}}>
+        <button className={tab==='tutti'?'active entrata':''} onClick={()=>setTab('tutti')}>Tutti i movimenti</button>
+        <button className={tab==='cassa'?'active entrata':''} onClick={()=>setTab('cassa')}>Cassa (importati)</button>
         <button className={tab==='riconc'?'active entrata':''} onClick={()=>setTab('riconc')}>Riconciliazione</button>
-        <button className={tab==='giornale'?'active entrata':''} onClick={()=>setTab('giornale')}>Libro giornale</button>
-        <button className={tab==='cassa'?'active entrata':''} onClick={()=>setTab('cassa')}>Movimenti cassa</button>
       </div>
+
+      {tab==='tutti' && <>
+        <div className="filters">
+          <span className="label">Conto</span>
+          <select value={fConto} onChange={e=>setFConto(e.target.value)}><option value="">Tutti</option>{contiUsati.map(c=><option key={c} value={c}>{contoByCode[c]?.nome||('#'+c)}</option>)}</select>
+          <span className="label">Tipo</span>
+          <select value={fTipo} onChange={e=>setFTipo(e.target.value)}><option value="">Tutti</option><option value="liquidita">Liquidità</option><option value="giroconto">Giroconto</option><option value="contabile">Contabile</option></select>
+          <input type="text" placeholder="Cerca descrizione/conto…" value={q} onChange={e=>setQ(e.target.value)}/>
+          <span style={{marginLeft:'auto',fontSize:12,color:'var(--ink-3)'}}>{movFilt.length} movimenti</span>
+        </div>
+        <div className="tbl-wrap">
+          <table className="tbl">
+            <thead><tr><th>Data</th><th>Descrizione</th><th>Conto</th><th>Tipo</th><th className="num">Dare</th><th className="num">Avere</th></tr></thead>
+            <tbody>
+              {movFilt.length===0 && <tr><td colSpan="6" className="empty-state">Nessun movimento</td></tr>}
+              {movFilt.map(m=>(
+                <tr key={m.key}>
+                  <td style={{whiteSpace:'nowrap'}}>{fmtDate(m.data)}</td>
+                  <td>{m.descr}</td>
+                  <td>{contoByCode[m.c]?.nome||('#'+m.c)}</td>
+                  <td><span className={'pill '+(m.tipo==='giroconto'?'giroconto':'')}>{tipoLabel(m.tipo)}</span></td>
+                  <td className="num">{m.d>0?num2(m.d):''}</td>
+                  <td className="num">{m.a>0?num2(m.a):''}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot><tr><td colSpan="4" style={{fontWeight:600}}>Totali</td><td className="num" style={{fontWeight:600}}>{num2(totD)}</td><td className="num" style={{fontWeight:600}}>{num2(totA)}</td></tr></tfoot>
+          </table>
+        </div>
+      </>}
+
+      {tab==='cassa' && <>
+        <div className="filters">
+          <span className="label">Mese</span>
+          <select value={fMese} onChange={e=>setFMese(e.target.value)}><option value="">Tutti</option>{MESI_ORD.filter(m=>MOVIMENTI.some(x=>x.mese===m)).map(m=><option key={m}>{m}</option>)}</select>
+          <span className="label">Conto</span>
+          <select value={fContoCassa} onChange={e=>setFContoCassa(e.target.value)}><option value="">Tutti</option>{LIQ_CODES.map(c=><option key={c} value={c}>{contoByCode[c].nome}</option>)}</select>
+          <span style={{marginLeft:'auto',fontSize:12,color:'var(--ink-3)'}}>+{num2(cassaE)} · −{num2(cassaU)}</span>
+        </div>
+        <div className="tbl-wrap">
+          <table className="tbl">
+            <thead><tr><th>Mese</th><th>Conto</th><th>Causale</th><th>Categoria</th><th>Metodo</th><th className="num">Importo</th></tr></thead>
+            <tbody>
+              {cassaFilt.map((m,i)=>(
+                <tr key={i}><td>{m.mese}</td><td>{m.conto}</td><td>{m.motivo}</td><td>{m.cat}</td><td>{m.metodo}</td>
+                  <td className={'num '+(m.tipo==='E'?'pos':'neg')}>{m.tipo==='E'?'+':'−'}{num2(m.imp)}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={{fontSize:12,color:'var(--ink-3)',marginTop:8,fontStyle:'italic'}}>Movimenti reali importati dagli sheet Entrate/Uscite. Servono da riscontro per la riconciliazione.</div>
+      </>}
 
       {tab==='riconc' && <>
         {Math.abs(totDiff)<0.01
           ? <div className="card" style={{borderColor:'#c8d8ce',background:'var(--accent-soft)',marginBottom:18,color:'var(--accent-ink)'}}><b>✓ Contabilità e movimenti reali allineati.</b></div>
-          : <div className="card" style={{borderColor:'#e6d5a8',background:'#fbf6e8',marginBottom:18,color:'#7a5a1d'}}><b>⚠ Differenza complessiva {num2(totDiff)} €</b> tra saldo reale (movimenti) e saldo contabile (giornale). Dettaglio per conto qui sotto.</div>}
+          : <div className="card" style={{borderColor:'#e6d5a8',background:'#fbf6e8',marginBottom:18,color:'#7a5a1d'}}><b>⚠ Differenza complessiva {num2(totDiff)} €</b> tra saldo reale (movimenti) e saldo contabile (giornale).</div>}
         <div className="tbl-wrap">
           <table className="tbl">
             <thead><tr><th>Conto</th><th className="num">Saldo iniziale</th><th className="num">Entrate</th><th className="num">Uscite</th><th className="num">Saldo reale</th><th className="num">Saldo contabile</th><th className="num">Differenza</th></tr></thead>
@@ -1223,11 +1290,8 @@ function PageMovimenti({scritture, saldi}){
               {ric.map(x=>(
                 <tr key={x.cod}>
                   <td><b>{x.nome}</b></td>
-                  <td className="num">{num2(x.ini)}</td>
-                  <td className="num pos">{num2(x.e)}</td>
-                  <td className="num neg">{num2(x.u)}</td>
-                  <td className="num">{num2(x.reale)}</td>
-                  <td className="num">{num2(x.contabile)}</td>
+                  <td className="num">{num2(x.ini)}</td><td className="num pos">{num2(x.e)}</td><td className="num neg">{num2(x.u)}</td>
+                  <td className="num">{num2(x.reale)}</td><td className="num">{num2(x.contabile)}</td>
                   <td className={'num '+(Math.abs(x.diff)<0.01?'':(x.diff<0?'neg':'pos'))}>{x.diff>0?'+':''}{num2(x.diff)}</td>
                 </tr>
               ))}
@@ -1235,121 +1299,129 @@ function PageMovimenti({scritture, saldi}){
             <tfoot><tr><td style={{fontWeight:600}}>Totale</td><td colSpan="5"></td><td className="num" style={{fontWeight:600,color:Math.abs(totDiff)<0.01?'var(--success)':'var(--warn)'}}>{num2(totDiff)}</td></tr></tfoot>
           </table>
         </div>
-        <div style={{fontSize:12,color:'var(--ink-3)',marginTop:10,fontStyle:'italic'}}>
-          Saldo reale = saldo iniziale + entrate − uscite (sheet Entrate/Uscite). Saldo contabile = somma Dare − Avere dal libro giornale.
-        </div>
-      </>}
-
-      {tab==='giornale' && <div className="tbl-wrap">
-        <table className="tbl">
-          <thead><tr><th>Data</th><th>Descrizione</th><th>Conto</th><th className="num">Dare</th><th className="num">Avere</th><th>Origine</th></tr></thead>
-          <tbody>
-            {scrSorted.map(s=> s.righe.map((r,i)=>(
-              <tr key={s.id+'_'+i}>
-                <td>{i===0?fmtDate(s.data):''}</td>
-                <td>{i===0?s.descr:''}</td>
-                <td>{contoByCode[r.c]?.nome||('#'+r.c)}</td>
-                <td className="num">{r.d>0?num2(r.d):''}</td>
-                <td className="num">{r.a>0?num2(r.a):''}</td>
-                <td>{i===0&&<span className={'pill '+(s.tipo==='giroconto'?'giroconto':s.origine==='manuale'?'entrata':'')}>{s.origine==='manuale'?(s.tipo==='giroconto'?'giroconto':'manuale'):'giornale'}</span>}</td>
-              </tr>
-            )))}
-          </tbody>
-        </table>
-      </div>}
-
-      {tab==='cassa' && <>
-        <div className="filters">
-          <span className="label">Mese</span>
-          <select value={fMese} onChange={e=>setFMese(e.target.value)}><option value="">Tutti</option>{MESI_ORD.filter(m=>MOVIMENTI.some(x=>x.mese===m)).map(m=><option key={m}>{m}</option>)}</select>
-          <span className="label">Conto</span>
-          <select value={fConto} onChange={e=>setFConto(e.target.value)}><option value="">Tutti</option>{LIQ_CODES.map(c=><option key={c} value={c}>{contoByCode[c].nome}</option>)}</select>
-        </div>
-        <div className="tbl-wrap">
-          <table className="tbl">
-            <thead><tr><th>Mese</th><th>Conto</th><th>Causale</th><th>Categoria</th><th>Metodo</th><th className="num">Importo</th></tr></thead>
-            <tbody>
-              {movFilt.map((m,i)=>(
-                <tr key={i}>
-                  <td>{m.mese}</td><td>{m.conto}</td><td>{m.motivo}</td><td>{m.cat}</td><td>{m.metodo}</td>
-                  <td className={'num '+(m.tipo==='E'?'pos':'neg')}>{m.tipo==='E'?'+':'−'}{num2(m.imp)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
       </>}
     </div>
   );
 }
 
 /* ============================================================
-   PAGINA: PIVOT CONTI
+   PAGINA: LIBRO GIORNALE
    ============================================================ */
-function PagePivotConti({saldi}){
-  const [fProsp,setFProsp]=useState('');
-  const [fCat,setFCat]=useState('');
+function PageLibroGiornale({scritture}){
   const [q,setQ]=useState('');
-  const cats = [...new Set(CONTI.map(c=>c.categoria))];
-
-  const rows = CONTI.filter(c=>(!fProsp||c.prospetto.startsWith(fProsp))&&(!fCat||c.categoria===fCat)&&(!q||c.nome.toLowerCase().includes(q.toLowerCase())))
-    .map(c=>({...c, ...(saldi[c.codice]||{dare:0,avere:0,saldo:0})}))
-    .filter(c=>c.dare!==0||c.avere!==0);
-
-  const totD=r2(rows.reduce((s,r)=>s+r.dare,0));
-  const totA=r2(rows.reduce((s,r)=>s+r.avere,0));
-
-  // raggruppato per categoria
-  const byCat = {};
-  rows.forEach(r=>{ (byCat[r.categoria]=byCat[r.categoria]||[]).push(r); });
+  const [fAnno,setFAnno]=useState('');
+  const anni=[...new Set(scritture.map(s=>(s.data||'').slice(0,4)).filter(Boolean))].sort();
+  const list=scritture.filter(s=>(!fAnno||(s.data||'').startsWith(fAnno))&&(!q||(s.descr||'').toLowerCase().includes(q.toLowerCase())))
+    .sort((a,b)=>(b.data||'').localeCompare(a.data||''));
+  const totD=r2(list.reduce((s,e)=>s+e.righe.reduce((x,r)=>x+(r.d||0),0),0));
+  const totA=r2(list.reduce((s,e)=>s+e.righe.reduce((x,r)=>x+(r.a||0),0),0));
 
   return (
     <div>
-      <PageHead title="Pivot Conti" sub="Saldi di ogni conto del piano dei conti"/>
+      <PageHead title="Libro Giornale" sub={`${list.length} scritture in partita doppia`}/>
       <div className="filters">
-        <span className="label">Prospetto</span>
-        <select value={fProsp} onChange={e=>setFProsp(e.target.value)}><option value="">Tutti</option><option value="SP">Stato Patrimoniale</option><option value="CE">Conto Economico</option></select>
-        <span className="label">Categoria</span>
-        <select value={fCat} onChange={e=>setFCat(e.target.value)}><option value="">Tutte</option>{cats.map(c=><option key={c}>{c}</option>)}</select>
-        <input type="text" placeholder="Cerca conto…" value={q} onChange={e=>setQ(e.target.value)}/>
+        <span className="label">Anno</span>
+        <select value={fAnno} onChange={e=>setFAnno(e.target.value)}><option value="">Tutti</option>{anni.map(a=><option key={a}>{a}</option>)}</select>
+        <input type="text" placeholder="Cerca descrizione…" value={q} onChange={e=>setQ(e.target.value)}/>
       </div>
-
-      {Object.keys(byCat).map(cat=>{
-        const list=byCat[cat];
-        const sd=r2(list.reduce((s,r)=>s+r.dare,0)), sa=r2(list.reduce((s,r)=>s+r.avere,0));
-        return (
-          <div key={cat} style={{marginBottom:18}}>
-            <div className="card-title serif" style={{fontSize:15,margin:'8px 0 8px'}}>{cat}</div>
-            <div className="tbl-wrap">
-              <table className="tbl">
-                <thead><tr><th style={{width:50}}>Cod</th><th>Conto</th><th className="num">Dare</th><th className="num">Avere</th><th className="num">Saldo</th></tr></thead>
-                <tbody>
-                  {list.map(r=>(
-                    <tr key={r.codice}>
-                      <td className="mono">{r.codice}</td><td>{r.nome}</td>
-                      <td className="num">{num2(r.dare)}</td><td className="num">{num2(r.avere)}</td>
-                      <td className={'num '+(r.saldo<0?'neg':'')}>{num2(r.saldo)}</td>
+      <div className="tbl-wrap">
+        <table className="tbl giornale">
+          <thead><tr><th style={{width:90}}>Data</th><th>Descrizione / Conto</th><th className="num">Dare</th><th className="num">Avere</th></tr></thead>
+          <tbody>
+            {list.map(s=>{
+              const sd=r2(s.righe.reduce((x,r)=>x+(r.d||0),0)), sa=r2(s.righe.reduce((x,r)=>x+(r.a||0),0));
+              const ok=Math.abs(sd-sa)<0.01;
+              return (
+                <React.Fragment key={s.id}>
+                  <tr className="gj-head">
+                    <td>{fmtDate(s.data)}</td>
+                    <td><b>{s.descr}</b> <span className={'pill '+(s.tipo==='giroconto'?'giroconto':'')} style={{marginLeft:6}}>{s.origine==='manuale'?(s.tipo==='giroconto'?'giroconto':'manuale'):'libro'}</span>{!ok&&<span className="pill" style={{background:'#f3dada',color:'#a33',marginLeft:6}}>non quadra</span>}</td>
+                    <td className="num"></td><td className="num"></td>
+                  </tr>
+                  {s.righe.map((r,i)=>(
+                    <tr key={s.id+'_'+i} className="gj-row">
+                      <td></td>
+                      <td style={{paddingLeft:r.d>0?20:46}}>{contoByCode[r.c]?.nome||('#'+r.c)}</td>
+                      <td className="num">{r.d>0?num2(r.d):''}</td>
+                      <td className="num">{r.a>0?num2(r.a):''}</td>
                     </tr>
                   ))}
-                </tbody>
-                <tfoot><tr><td colSpan="2" style={{fontWeight:600}}>Totale {cat}</td><td className="num" style={{fontWeight:600}}>{num2(sd)}</td><td className="num" style={{fontWeight:600}}>{num2(sa)}</td><td className="num" style={{fontWeight:600}}>{num2(r2(sd-sa))}</td></tr></tfoot>
-              </table>
-            </div>
-          </div>
-        );
-      })}
-
-      <div className="card" style={{marginTop:8,display:'flex',justifyContent:'space-between',background:'var(--ink)',color:'#f0eee7'}}>
-        <span style={{fontFamily:'Fraunces',fontSize:16}}>Totale complessivo</span>
-        <span className="mono">Dare {num2(totD)} · Avere {num2(totA)} · {Math.abs(totD-totA)<0.01?'✓ quadrato':'≠ '+num2(r2(totD-totA))}</span>
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+          <tfoot><tr><td colSpan="2" style={{fontWeight:600}}>Totali</td><td className="num" style={{fontWeight:600}}>{num2(totD)}</td><td className="num" style={{fontWeight:600}}>{num2(totA)}</td></tr></tfoot>
+        </table>
       </div>
     </div>
   );
 }
 
 /* ============================================================
-   PAGINA: BILANCIO DI VERIFICA + SP/CE
+   PAGINA: PIVOT CONTI  (pivot unica, tutti i conti)
    ============================================================ */
+function PagePivotConti({saldi}){
+  const [collapsed,setCollapsed]=useState({});
+  const [q,setQ]=useState('');
+  const toggle=cat=>setCollapsed(c=>({...c,[cat]:!c[cat]}));
+
+  // ordine categorie come nel piano dei conti
+  const CAT_ORDER=[];
+  CONTI.forEach(c=>{ if(!CAT_ORDER.includes(c.categoria)) CAT_ORDER.push(c.categoria); });
+
+  const righe=CONTI.map(c=>({...c,...(saldi[c.codice]||{dare:0,avere:0,saldo:0})}))
+    .filter(c=>(c.dare!==0||c.avere!==0)&&(!q||c.nome.toLowerCase().includes(q.toLowerCase())||String(c.codice)===q));
+  const byCat={}; righe.forEach(r=>{ (byCat[r.categoria]=byCat[r.categoria]||[]).push(r); });
+  const totD=r2(righe.reduce((s,r)=>s+r.dare,0));
+  const totA=r2(righe.reduce((s,r)=>s+r.avere,0));
+
+  return (
+    <div>
+      <PageHead title="Pivot Conti" sub="Saldi di tutti i conti — clicca una categoria per comprimerla"/>
+      <div className="filters">
+        <input type="text" placeholder="Cerca conto…" value={q} onChange={e=>setQ(e.target.value)}/>
+      </div>
+      <div className="tbl-wrap">
+        <table className="tbl pivot">
+          <thead><tr><th style={{width:48}}>Cod</th><th>Conto</th><th className="num">Somma Dare</th><th className="num">Somma Avere</th><th className="num">Saldo</th></tr></thead>
+          <tbody>
+            {CAT_ORDER.filter(cat=>byCat[cat]).map(cat=>{
+              const list=byCat[cat];
+              const sd=r2(list.reduce((s,r)=>s+r.dare,0)), sa=r2(list.reduce((s,r)=>s+r.avere,0));
+              const isOpen=!collapsed[cat];
+              return (
+                <React.Fragment key={cat}>
+                  <tr className="pv-group" onClick={()=>toggle(cat)}>
+                    <td>{isOpen?'▾':'▸'}</td>
+                    <td><b>{cat}</b> <span style={{color:'var(--ink-3)',fontWeight:400}}>({list.length})</span></td>
+                    <td className="num"><b>{num2(sd)}</b></td>
+                    <td className="num"><b>{num2(sa)}</b></td>
+                    <td className="num"><b>{num2(r2(sd-sa))}</b></td>
+                  </tr>
+                  {isOpen && list.sort((a,b)=>a.codice-b.codice).map(r=>(
+                    <tr key={r.codice} className="pv-row">
+                      <td className="mono">{r.codice}</td>
+                      <td style={{paddingLeft:24}}>{r.nome}</td>
+                      <td className="num">{r.dare?num2(r.dare):''}</td>
+                      <td className="num">{r.avere?num2(r.avere):''}</td>
+                      <td className={'num '+(r.saldo<0?'neg':'')}>{num2(r.saldo)}</td>
+                    </tr>
+                  ))}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+          <tfoot><tr><td colSpan="2" style={{fontWeight:700}}>TOTALE COMPLESSIVO</td>
+            <td className="num" style={{fontWeight:700}}>{num2(totD)}</td>
+            <td className="num" style={{fontWeight:700}}>{num2(totA)}</td>
+            <td className="num" style={{fontWeight:700,color:Math.abs(totD-totA)<0.01?'var(--success)':'var(--danger)'}}>{Math.abs(totD-totA)<0.01?'✓':num2(r2(totD-totA))}</td>
+          </tr></tfoot>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function PageBilancio({saldi}){
   const [tab,setTab]=useState('bdv'); // bdv | spce
   const conti = CONTI.map(c=>({...c,...(saldi[c.codice]||{dare:0,avere:0,saldo:0})})).filter(c=>c.dare!==0||c.avere!==0);
@@ -1445,69 +1517,136 @@ function PageBilancio({saldi}){
     </div>
   );
 }
-
 /* ============================================================
-   PAGINA: RENDICONTO FINANZIARIO
+   PAGINA: RENDICONTO FINANZIARIO  (matrice: mesi in colonna, raggruppabile)
    ============================================================ */
-function PageRendiconto(){
-  const mesi = MESI_ORD.filter(m=>MOVIMENTI.some(x=>x.mese===m));
-  const conti = LIQ_CODES;
-  const INVEST = ['FONDI INVESTIMENTO'];
+const RF_INVEST = ['FONDI INVESTIMENTO'];
+const RF_INTERNI = ['GIROCONTI','RICARICA PREPAGATA','RICARICA CARTA'];
 
-  // calcolo per mese: per ogni conto disp.iniz, entrate op, uscite op, investimenti, disp finale
-  let saldiCorr = {}; LIQ_CODES.forEach(c=>saldiCorr[c]=SALDI_INIZIALI[c]||0);
-  const tabella = mesi.map(mese=>{
-    const perConto = LIQ_CODES.map(cod=>{
-      const ini=saldiCorr[cod];
-      const ent=r2(MOVIMENTI.filter(m=>m.mese===mese&&m.cod===cod&&m.tipo==='E').reduce((s,m)=>s+m.imp,0));
-      const inv=r2(MOVIMENTI.filter(m=>m.mese===mese&&m.cod===cod&&m.tipo==='U'&&INVEST.includes(m.cat)).reduce((s,m)=>s+m.imp,0));
-      const uscOp=r2(MOVIMENTI.filter(m=>m.mese===mese&&m.cod===cod&&m.tipo==='U'&&!INVEST.includes(m.cat)).reduce((s,m)=>s+m.imp,0));
-      const fin=r2(ini+ent-uscOp-inv);
-      saldiCorr[cod]=fin;
-      return {cod,ini,ent,uscOp,inv,fin,flusso:r2(ent-uscOp-inv)};
-    });
-    const tot=k=>r2(perConto.reduce((s,x)=>s+x[k],0));
-    return {mese,perConto,tot:{ini:tot('ini'),ent:tot('ent'),uscOp:tot('uscOp'),inv:tot('inv'),fin:tot('fin'),flusso:tot('flusso')}};
+function PageRendiconto(){
+  const [vista,setVista] = useState('mensile'); // mensile | totali
+  const [collapsed,setCollapsed] = useState({entrate:false,uscite:false,investimenti:false});
+  const toggle = k => setCollapsed(c=>({...c,[k]:!c[k]}));
+
+  const mesi = MESI_ORD.filter(m=>MOVIMENTI.some(x=>x.mese===m));
+  const catE = [...new Set(MOVIMENTI.filter(m=>m.tipo==='E'&&!RF_INTERNI.includes(m.cat)).map(m=>m.cat))].sort();
+  const catU = [...new Set(MOVIMENTI.filter(m=>m.tipo==='U'&&!RF_INVEST.includes(m.cat)&&!RF_INTERNI.includes(m.cat)).map(m=>m.cat))].sort();
+  const catI = [...new Set(MOVIMENTI.filter(m=>RF_INVEST.includes(m.cat)).map(m=>m.cat))].sort();
+
+  const sum = (tipoTest, cat, mese) => r2(MOVIMENTI.filter(m=>tipoTest(m)&&m.cat===cat&&m.mese===mese).reduce((s,m)=>s+m.imp,0));
+  const sumTot = (tipoTest, cats, mese) => r2(cats.reduce((s,c)=>s+sum(tipoTest,c,mese),0));
+  const isE=m=>m.tipo==='E', isU=m=>m.tipo==='U';
+
+  // catena disponibilità
+  const dispIni={}, dispFin={}, flusso={}, totEnt={}, totUsc={}, totInv={};
+  let prev = r2(LIQ_CODES.reduce((s,c)=>s+(SALDI_INIZIALI[c]||0),0));
+  mesi.forEach(m=>{
+    dispIni[m]=prev;
+    totEnt[m]=sumTot(isE,catE,m);
+    totUsc[m]=sumTot(isU,catU,m);
+    totInv[m]=sumTot(isU,catI,m);
+    flusso[m]=r2(totEnt[m]-totUsc[m]-totInv[m]);
+    dispFin[m]=r2(dispIni[m]+flusso[m]);
+    prev=dispFin[m];
   });
+  const sommaMesi = arr => r2(mesi.reduce((s,m)=>s+(arr[m]||0),0));
+  const colTot = {
+    dispIni: dispIni[mesi[0]]||0, dispFin: dispFin[mesi[mesi.length-1]]||0,
+    totEnt: sommaMesi(totEnt), totUsc: sommaMesi(totUsc), totInv: sommaMesi(totInv), flusso: sommaMesi(flusso),
+  };
+  const colCatTot = (tipoTest,cat)=> r2(mesi.reduce((s,m)=>s+sum(tipoTest,cat,m),0));
+
+  const cols = vista==='mensile' ? mesi : [];
+  const Cell = ({v,cls}) => <td className={'num '+(cls||'')}>{v||v===0?num2(v):''}</td>;
 
   return (
     <div>
-      <PageHead title="Rendiconto Finanziario" sub="Flussi di cassa mensili per conto (schema RF)"/>
-      <div className="rf-compact">
-        {tabella.map(t=>(
-          <div key={t.mese} style={{marginBottom:18}}>
-            <div className="card-title serif" style={{fontSize:15,margin:'6px 0 8px',textTransform:'capitalize'}}>{t.mese}</div>
-            <div className="tbl-wrap">
-              <table className="tbl">
-                <thead><tr><th>Conto</th><th className="num">Disp. iniziale</th><th className="num">Entrate op.</th><th className="num">Uscite op.</th><th className="num">Investimenti</th><th className="num">Flusso netto</th><th className="num">Disp. finale</th></tr></thead>
-                <tbody>
-                  {t.perConto.map(x=>(
-                    <tr key={x.cod}>
-                      <td>{contoByCode[x.cod].nome}</td>
-                      <td className="num">{num2(x.ini)}</td>
-                      <td className="num pos">{num2(x.ent)}</td>
-                      <td className="num neg">{num2(x.uscOp)}</td>
-                      <td className="num">{num2(x.inv)}</td>
-                      <td className={'num '+(x.flusso<0?'neg':'pos')}>{num2(x.flusso)}</td>
-                      <td className="num">{num2(x.fin)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot><tr>
-                  <td style={{fontWeight:600}}>Totale</td>
-                  <td className="num" style={{fontWeight:600}}>{num2(t.tot.ini)}</td>
-                  <td className="num" style={{fontWeight:600}}>{num2(t.tot.ent)}</td>
-                  <td className="num" style={{fontWeight:600}}>{num2(t.tot.uscOp)}</td>
-                  <td className="num" style={{fontWeight:600}}>{num2(t.tot.inv)}</td>
-                  <td className="num" style={{fontWeight:600}}>{num2(t.tot.flusso)}</td>
-                  <td className="num" style={{fontWeight:600}}>{num2(t.tot.fin)}</td>
-                </tr></tfoot>
-              </table>
-            </div>
-          </div>
-        ))}
+      <PageHead title="Rendiconto Finanziario" sub="Flussi di cassa — mesi in colonna, sezioni raggruppabili">
+        <div className="tipo-switch" style={{gridTemplateColumns:'1fr 1fr',width:200}}>
+          <button className={vista==='mensile'?'active entrata':''} onClick={()=>setVista('mensile')}>Mensile</button>
+          <button className={vista==='totali'?'active entrata':''} onClick={()=>setVista('totali')}>Totali</button>
+        </div>
+      </PageHead>
+
+      <div className="tbl-wrap">
+        <table className="tbl rf-matrix">
+          <thead>
+            <tr>
+              <th className="rf-voce">Voce</th>
+              {cols.map(m=><th key={m} className="num" style={{textTransform:'capitalize'}}>{m}</th>)}
+              <th className="num">Totale</th>
+            </tr>
+          </thead>
+          <tbody>
+            {/* DISP INIZIALI */}
+            <tr className="rf-tot">
+              <td className="rf-voce">Disponibilità iniziali</td>
+              {cols.map(m=><Cell key={m} v={dispIni[m]}/>)}
+              <Cell v={colTot.dispIni}/>
+            </tr>
+
+            {/* ENTRATE */}
+            <tr className="rf-group" onClick={()=>toggle('entrate')}>
+              <td className="rf-voce">{collapsed.entrate?'▸':'▾'} Entrate operative</td>
+              {cols.map(m=><Cell key={m} v={totEnt[m]} cls="pos"/>)}
+              <Cell v={colTot.totEnt} cls="pos"/>
+            </tr>
+            {!collapsed.entrate && catE.map(cat=>(
+              <tr key={'e'+cat} className="rf-row">
+                <td className="rf-voce sub">{cat}</td>
+                {cols.map(m=><Cell key={m} v={sum(isE,cat,m)}/>)}
+                <Cell v={colCatTot(isE,cat)}/>
+              </tr>
+            ))}
+
+            {/* USCITE */}
+            <tr className="rf-group" onClick={()=>toggle('uscite')}>
+              <td className="rf-voce">{collapsed.uscite?'▸':'▾'} Uscite operative</td>
+              {cols.map(m=><Cell key={m} v={totUsc[m]} cls="neg"/>)}
+              <Cell v={colTot.totUsc} cls="neg"/>
+            </tr>
+            {!collapsed.uscite && catU.map(cat=>(
+              <tr key={'u'+cat} className="rf-row">
+                <td className="rf-voce sub">{cat}</td>
+                {cols.map(m=><Cell key={m} v={sum(isU,cat,m)}/>)}
+                <Cell v={colCatTot(isU,cat)}/>
+              </tr>
+            ))}
+
+            {/* INVESTIMENTI */}
+            {catI.length>0 && <>
+              <tr className="rf-group" onClick={()=>toggle('investimenti')}>
+                <td className="rf-voce">{collapsed.investimenti?'▸':'▾'} Investimenti</td>
+                {cols.map(m=><Cell key={m} v={totInv[m]} cls="neg"/>)}
+                <Cell v={colTot.totInv} cls="neg"/>
+              </tr>
+              {!collapsed.investimenti && catI.map(cat=>(
+                <tr key={'i'+cat} className="rf-row">
+                  <td className="rf-voce sub">{cat}</td>
+                  {cols.map(m=><Cell key={m} v={sum(isU,cat,m)}/>)}
+                  <Cell v={colCatTot(isU,cat)}/>
+                </tr>
+              ))}
+            </>}
+
+            {/* FLUSSO */}
+            <tr className="rf-tot">
+              <td className="rf-voce">Flusso del periodo</td>
+              {cols.map(m=><Cell key={m} v={flusso[m]} cls={flusso[m]<0?'neg':'pos'}/>)}
+              <Cell v={colTot.flusso} cls={colTot.flusso<0?'neg':'pos'}/>
+            </tr>
+            {/* DISP FINALI */}
+            <tr className="rf-tot strong">
+              <td className="rf-voce">Disponibilità finali</td>
+              {cols.map(m=><Cell key={m} v={dispFin[m]}/>)}
+              <Cell v={colTot.dispFin}/>
+            </tr>
+          </tbody>
+        </table>
       </div>
-      <div style={{fontSize:12,color:'var(--ink-3)',fontStyle:'italic'}}>Investimenti = uscite di categoria “FONDI INVESTIMENTO”. Flusso netto = entrate − uscite operative − investimenti.</div>
+      <div style={{fontSize:12,color:'var(--ink-3)',marginTop:10,fontStyle:'italic'}}>
+        Flusso = entrate operative − uscite operative − investimenti. Giroconti e ricariche interne (trasferimenti tra conti propri) sono esclusi perché si compensano. Investimenti = categoria “FONDI INVESTIMENTO”.
+      </div>
     </div>
   );
 }
@@ -1736,14 +1875,185 @@ function PagePianoConti({saldi}){
 }
 
 /* ============================================================
-   APP SHELL
+   PAGINA: EXPORT
    ============================================================ */
+function PageExport({scritture, cespiti, saldi, toast}){
+  function buildWorkbook(){
+    const wb=XLSX.utils.book_new();
+    const add=(name,aoa)=>XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(aoa),name);
+
+    // Libro Giornale
+    const gj=[['Data','Descrizione','Codice','Conto','Dare','Avere']];
+    [...scritture].sort((a,b)=>(a.data||'').localeCompare(b.data||'')).forEach(s=>s.righe.forEach((r,i)=>
+      gj.push([i===0?s.data:'',i===0?s.descr:'',r.c,contoByCode[r.c]?.nome||'',r.d||'',r.a||''])));
+    add('Libro Giornale',gj);
+
+    // Movimenti (tutti)
+    const mv=[['Data','Descrizione','Conto','Tipo','Dare','Avere']];
+    [...scritture].sort((a,b)=>(b.data||'').localeCompare(a.data||'')).forEach(s=>s.righe.forEach(r=>
+      mv.push([s.data,s.descr,contoByCode[r.c]?.nome||'',s.tipo,r.d||'',r.a||''])));
+    add('Movimenti',mv);
+
+    // Movimenti cassa importati
+    const cs=[['Mese','Conto','Causale','Categoria','Metodo','Tipo','Importo']];
+    MOVIMENTI.forEach(m=>cs.push([m.mese,m.conto,m.motivo,m.cat,m.metodo,m.tipo==='E'?'Entrata':'Uscita',m.imp]));
+    add('Movimenti Cassa',cs);
+
+    // Pivot / Bilancio di verifica
+    const pv=[['Codice','Conto','Prospetto','Categoria','Dare','Avere','Saldo']];
+    let td=0,ta=0;
+    CONTI.forEach(c=>{const s=saldi[c.codice]||{dare:0,avere:0,saldo:0}; if(s.dare||s.avere){ pv.push([c.codice,c.nome,c.prospetto,c.categoria,s.dare,s.avere,s.saldo]); td+=s.dare; ta+=s.avere; }});
+    pv.push(['','','','TOTALE',r2(td),r2(ta),r2(td-ta)]);
+    add('Bilancio di Verifica',pv);
+
+    // Rendiconto (mesi in colonna)
+    const mesi=MESI_ORD.filter(m=>MOVIMENTI.some(x=>x.mese===m));
+    const sumc=(test,cats,m)=>r2(cats.reduce((s,c)=>s+MOVIMENTI.filter(x=>test(x)&&x.cat===c&&x.mese===m).reduce((q,x)=>q+x.imp,0),0));
+    const catE=[...new Set(MOVIMENTI.filter(m=>m.tipo==='E'&&!RF_INTERNI.includes(m.cat)).map(m=>m.cat))];
+    const catU=[...new Set(MOVIMENTI.filter(m=>m.tipo==='U'&&!RF_INVEST.includes(m.cat)&&!RF_INTERNI.includes(m.cat)).map(m=>m.cat))];
+    const rf=[['Voce',...mesi,'Totale']];
+    const rowFn=(label,fn)=>{const vals=mesi.map(fn); rf.push([label,...vals,r2(vals.reduce((a,b)=>a+b,0))]);};
+    let prev=r2(LIQ_CODES.reduce((s,c)=>s+(SALDI_INIZIALI[c]||0),0)); const di={},df={};
+    mesi.forEach(m=>{di[m]=prev; const e=sumc(x=>x.tipo==='E',catE,m),u=sumc(x=>x.tipo==='U',catU,m),inv=sumc(x=>x.tipo==='U',RF_INVEST,m); df[m]=r2(prev+e-u-inv); prev=df[m];});
+    rf.push(['Disponibilità iniziali',...mesi.map(m=>di[m]),di[mesi[0]]||0]);
+    rowFn('Entrate operative',m=>sumc(x=>x.tipo==='E',catE,m));
+    rowFn('Uscite operative',m=>sumc(x=>x.tipo==='U',catU,m));
+    rowFn('Investimenti',m=>sumc(x=>x.tipo==='U',RF_INVEST,m));
+    rowFn('Flusso del periodo',m=>r2(sumc(x=>x.tipo==='E',catE,m)-sumc(x=>x.tipo==='U',catU,m)-sumc(x=>x.tipo==='U',RF_INVEST,m)));
+    rf.push(['Disponibilità finali',...mesi.map(m=>df[m]),df[mesi[mesi.length-1]]||0]);
+    add('Rendiconto',rf);
+
+    // Cespiti
+    const ce=[['Cespite','Classe','Anno','Costo storico','Aliquota','Quota es.','Fondo','Valore netto']];
+    cespiti.forEach(c=>ce.push([c.nome,c.classe,c.annoIni,c.costoStorico,c.aliquota,c.quotaEs,c.fondo,r2((c.costoStorico||0)-(c.fondo||0))]));
+    add('Cespiti',ce);
+
+    // Piano dei conti
+    const pc=[['Codice','Nome','Prospetto','Categoria','Eccedenza']];
+    CONTI.forEach(c=>pc.push([c.codice,c.nome,c.prospetto,c.categoria,c.eccedenza]));
+    add('Piano dei Conti',pc);
+
+    return wb;
+  }
+  function exportExcel(){
+    if(!window.XLSX){ toast('Libreria non caricata','error'); return; }
+    XLSX.writeFile(buildWorkbook(),`Contabilita_${todayISO()}.xlsx`);
+    toast('Export Excel completato','success');
+  }
+  function exportJson(){
+    const data={scritture,cespiti,exportedAt:new Date().toISOString()};
+    const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+    a.download=`backup_contabilita_${todayISO()}.json`; a.click(); URL.revokeObjectURL(a.href);
+    toast('Backup JSON scaricato','success');
+  }
+
+  // ---------- PDF ----------
+  function pdfHeader(doc,titolo){
+    doc.setFont('helvetica','bold'); doc.setFontSize(16);
+    doc.text('CONTABILITÀ PERSONALE',105,18,{align:'center'});
+    doc.setFontSize(11); doc.setFont('helvetica','normal');
+    doc.text(titolo,105,25,{align:'center'});
+    doc.setFontSize(9); doc.setTextColor(120);
+    doc.text(`Generato il ${new Date().toLocaleDateString('it-IT')}`,105,31,{align:'center'});
+    doc.setTextColor(0);
+  }
+  function exportBilancioPDF(){
+    if(!window.jspdf){ toast('Libreria PDF non caricata','error'); return; }
+    const {jsPDF}=window.jspdf; const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+    pdfHeader(doc,'Bilancio di Verifica');
+    let td=0,ta=0; const rows=[];
+    CONTI.forEach(c=>{const s=saldi[c.codice]||{dare:0,avere:0,saldo:0}; if(s.dare||s.avere){
+      td+=s.dare; ta+=s.avere;
+      rows.push([String(c.codice).padStart(2,'0'),c.nome,c.categoria,s.dare?num2(s.dare):'',s.avere?num2(s.avere):'',num2(Math.abs(s.saldo))+(s.saldo<0?' A':s.saldo>0?' D':'')]);
+    }});
+    rows.push([{content:'TOTALI',colSpan:3,styles:{fontStyle:'bold'}},{content:num2(r2(td)),styles:{fontStyle:'bold'}},{content:num2(r2(ta)),styles:{fontStyle:'bold'}},'']);
+    doc.autoTable({startY:36,head:[['Cod','Conto','Categoria','Dare','Avere','Saldo']],body:rows,
+      styles:{fontSize:8,cellPadding:1.5},headStyles:{fillColor:[45,94,62]},
+      columnStyles:{3:{halign:'right'},4:{halign:'right'},5:{halign:'right'}}});
+    doc.save(`Bilancio_di_Verifica_${todayISO()}.pdf`); toast('PDF generato','success');
+  }
+  function exportRendicontoPDF(){
+    if(!window.jspdf){ toast('Libreria PDF non caricata','error'); return; }
+    const {jsPDF}=window.jspdf; const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
+    pdfHeader(doc,'Rendiconto Finanziario');
+    const mesi=MESI_ORD.filter(m=>MOVIMENTI.some(x=>x.mese===m));
+    const sumc=(test,cats,m)=>r2(cats.reduce((s,c)=>s+MOVIMENTI.filter(x=>test(x)&&x.cat===c&&x.mese===m).reduce((q,x)=>q+x.imp,0),0));
+    const catE=[...new Set(MOVIMENTI.filter(m=>m.tipo==='E'&&!RF_INTERNI.includes(m.cat)).map(m=>m.cat))];
+    const catU=[...new Set(MOVIMENTI.filter(m=>m.tipo==='U'&&!RF_INVEST.includes(m.cat)&&!RF_INTERNI.includes(m.cat)).map(m=>m.cat))];
+    let prev=r2(LIQ_CODES.reduce((s,c)=>s+(SALDI_INIZIALI[c]||0),0)); const di={},df={};
+    mesi.forEach(m=>{di[m]=prev; const e=sumc(x=>x.tipo==='E',catE,m),u=sumc(x=>x.tipo==='U',catU,m),inv=sumc(x=>x.tipo==='U',RF_INVEST,m); df[m]=r2(prev+e-u-inv); prev=df[m];});
+    const row=(label,fn)=>{const v=mesi.map(fn); return [label,...v.map(num2),num2(r2(v.reduce((a,b)=>a+b,0)))];};
+    const body=[
+      ['Disponibilità iniziali',...mesi.map(m=>num2(di[m])),num2(di[mesi[0]]||0)],
+      row('Entrate operative',m=>sumc(x=>x.tipo==='E',catE,m)),
+      row('Uscite operative',m=>sumc(x=>x.tipo==='U',catU,m)),
+      row('Investimenti',m=>sumc(x=>x.tipo==='U',RF_INVEST,m)),
+      row('Flusso del periodo',m=>r2(sumc(x=>x.tipo==='E',catE,m)-sumc(x=>x.tipo==='U',catU,m)-sumc(x=>x.tipo==='U',RF_INVEST,m))),
+      ['Disponibilità finali',...mesi.map(m=>num2(df[m])),num2(df[mesi[mesi.length-1]]||0)],
+    ];
+    const halign={}; mesi.forEach((_,i)=>halign[i+1]={halign:'right'}); halign[mesi.length+1]={halign:'right'};
+    doc.autoTable({startY:36,head:[['Voce',...mesi.map(m=>m[0].toUpperCase()+m.slice(1)),'Totale']],body,
+      styles:{fontSize:8,cellPadding:1.5},headStyles:{fillColor:[45,94,62]},columnStyles:halign});
+    doc.save(`Rendiconto_${todayISO()}.pdf`); toast('PDF generato','success');
+  }
+  function exportGiornalePDF(){
+    if(!window.jspdf){ toast('Libreria PDF non caricata','error'); return; }
+    const {jsPDF}=window.jspdf; const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+    pdfHeader(doc,'Libro Giornale');
+    const body=[];
+    [...scritture].sort((a,b)=>(a.data||'').localeCompare(b.data||'')).forEach(s=>{
+      body.push([{content:`${fmtDate(s.data)} — ${s.descr}`,colSpan:3,styles:{fontStyle:'bold',fillColor:[240,238,233]}}]);
+      s.righe.forEach(r=>body.push([(r.d>0?'':'    ')+ (contoByCode[r.c]?.nome||('#'+r.c)), r.d>0?num2(r.d):'', r.a>0?num2(r.a):'']));
+    });
+    doc.autoTable({startY:36,head:[['Conto','Dare','Avere']],body,
+      styles:{fontSize:8,cellPadding:1.4},headStyles:{fillColor:[45,94,62]},
+      columnStyles:{1:{halign:'right'},2:{halign:'right'}}});
+    doc.save(`Libro_Giornale_${todayISO()}.pdf`); toast('PDF generato','success');
+  }
+
+  const Card=({title,desc,sheets,btn,onClick,gold})=>(
+    <div className="card" style={{display:'flex',flexDirection:'column',gap:10}}>
+      <div className="card-title serif" style={{fontSize:16}}>{title}</div>
+      <div style={{color:'var(--ink-2)',fontSize:13,flex:1}}>{desc}</div>
+      {sheets && <div style={{display:'flex',flexWrap:'wrap',gap:6}}>{sheets.map(s=><span key={s} className="pill">{s}</span>)}</div>}
+      <button className={'btn '+(gold?'':'accent')} style={gold?{background:'var(--gold)',borderColor:'var(--gold)',alignSelf:'flex-start'}:{alignSelf:'flex-start'}} onClick={onClick}>{btn}</button>
+    </div>
+  );
+
+  return (
+    <div>
+      <PageHead title="Export" sub="Scarica i dati della contabilità"/>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:16}}>
+        <Card title="Esporta in Excel"
+          desc="Cartella .xlsx con tutti i prospetti, pronta da aprire o ricaricare nel tuo foglio di lavoro."
+          sheets={['Libro Giornale','Movimenti','Cassa','Bilancio di Verifica','Rendiconto','Cespiti','Piano dei Conti']}
+          btn="↓ Scarica Excel" onClick={exportExcel}/>
+        <Card title="Backup dati (JSON)"
+          desc="Copia di sicurezza di scritture e cespiti. Utile da conservare prima di modifiche importanti."
+          btn="↓ Scarica backup" onClick={exportJson} gold/>
+
+        <div className="card" style={{display:'flex',flexDirection:'column',gap:10}}>
+          <div className="card-title serif" style={{fontSize:16}}>Esporta in PDF</div>
+          <div style={{color:'var(--ink-2)',fontSize:13,flex:1}}>Documenti stampabili dei prospetti principali, pronti da archiviare o condividere.</div>
+          <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
+            <button className="btn" onClick={exportBilancioPDF}>Bilancio di Verifica</button>
+            <button className="btn" onClick={exportRendicontoPDF}>Rendiconto</button>
+            <button className="btn" onClick={exportGiornalePDF}>Libro Giornale</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 const NAV = [
   {sec:'Panoramica',items:[{id:'dashboard',ico:'◫',label:'Dashboard'}]},
   {sec:'Registrazioni',items:[
     {id:'nuova',ico:'+',label:'Nuova scrittura'},
-    {id:'giroconti',ico:'⇄',label:'Giroconti'},
-    {id:'movimenti',ico:'≡',label:'Movimenti & Riconc.'},
+    {id:'giornale',ico:'≣',label:'Libro Giornale'},
+    {id:'movimenti',ico:'≡',label:'Movimenti'},
   ]},
   {sec:'Report',items:[
     {id:'pivot',ico:'▦',label:'Pivot Conti'},
@@ -1755,6 +2065,9 @@ const NAV = [
     {id:'cespiti',ico:'▣',label:'Cespiti'},
     {id:'ammortamenti',ico:'↘',label:'Ammortamenti'},
   ]},
+  {sec:'Strumenti',items:[
+    {id:'export',ico:'↓',label:'Export'},
+  ]},
 ];
 
 function seedScrittureObj(){
@@ -1764,7 +2077,7 @@ function seedCespitiObj(){
   const obj={}; CESPITI_SEED.forEach((c,i)=>{ obj['c'+i]={...c}; delete obj['c'+i].id; }); return obj;
 }
 
-function App(){
+function App({authUser, onLogout}){
   const [scritture,setScritture]=useState([]);
   const [cespiti,setCespiti]=useState([]);
   const [ready,setReady]=useState(false);
@@ -1813,24 +2126,6 @@ function App(){
       showToast('Dati ripristinati','success');
     }
   }
-  function exportXlsx(){
-    if(!window.XLSX){showToast('Libreria non caricata','error');return;}
-    const wb=XLSX.utils.book_new();
-    // Libro giornale
-    const gj=[['Data','Descrizione','Codice','Conto','Dare','Avere']];
-    [...scritture].sort((a,b)=>a.data.localeCompare(b.data)).forEach(s=>s.righe.forEach((r,i)=>gj.push([i===0?s.data:'',i===0?s.descr:'',r.c,contoByCode[r.c]?.nome||'',r.d||'',r.a||''])));
-    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(gj),'Libro Giornale');
-    // Pivot conti
-    const pv=[['Codice','Conto','Prospetto','Categoria','Dare','Avere','Saldo']];
-    CONTI.forEach(c=>{const s=saldi[c.codice]||{dare:0,avere:0,saldo:0}; if(s.dare||s.avere) pv.push([c.codice,c.nome,c.prospetto,c.categoria,s.dare,s.avere,s.saldo]);});
-    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(pv),'Pivot Conti');
-    // Cespiti
-    const cs=[['Cespite','Classe','Anno','Costo storico','Aliquota','Quota es.','Fondo','Valore netto']];
-    cespiti.forEach(c=>cs.push([c.nome,c.classe,c.annoIni,c.costoStorico,c.aliquota,c.quotaEs,c.fondo,r2((c.costoStorico||0)-(c.fondo||0))]));
-    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(cs),'Cespiti');
-    XLSX.writeFile(wb,'Contabilita_personale.xlsx');
-    showToast('Export completato','success');
-  }
 
   const nav=id=>{setPage(id);setMenuOpen(false);};
 
@@ -1848,8 +2143,8 @@ function App(){
         <h1 className="serif">Contabilità Personale<span className="sub">partita doppia</span></h1>
         <span className="badge desktop-only" style={firebaseReady?{borderColor:'#3a5a42',color:'#9ec7a8'}:{}}>{firebaseReady?'● Firebase':'● Locale'}</span>
         <span className="badge desktop-only">{scritture.length} scritture</span>
-        <button className="icon-btn desktop-only" onClick={exportXlsx}>↓ Export</button>
         <button className="icon-btn" onClick={resetSeed}>↺ Reset</button>
+        {onLogout && <button className="icon-btn" onClick={onLogout} title={authUser?authUser.email:''}>⎋ Esci</button>}
       </div>
       <div className="layout">
         <div className={'sidebar'+(menuOpen?' open':'')}>
@@ -1868,7 +2163,7 @@ function App(){
         <div className="main">
           {page==='dashboard' && <PageDashboard scritture={scritture} saldi={saldi} goto={nav}/>}
           {page==='nuova' && <PageNuova onAdd={addScrittura} toast={showToast}/>}
-          {page==='giroconti' && <PageGiroconti onAdd={addScrittura} toast={showToast} scritture={scritture}/>}
+          {page==='giornale' && <PageLibroGiornale scritture={scritture}/>}
           {page==='movimenti' && <PageMovimenti scritture={scritture} saldi={saldi}/>}
           {page==='pivot' && <PagePivotConti saldi={saldi}/>}
           {page==='bilancio' && <PageBilancio saldi={saldi}/>}
@@ -1876,6 +2171,7 @@ function App(){
           {page==='pianoconti' && <PagePianoConti saldi={saldi}/>}
           {page==='cespiti' && <PageCespiti cespiti={cespiti} setCespiti={updateCespiti} toast={showToast}/>}
           {page==='ammortamenti' && <PageAmmortamenti cespiti={cespiti} onAdd={addScrittura} updateCespiti={updateCespiti} toast={showToast}/>}
+          {page==='export' && <PageExport scritture={scritture} cespiti={cespiti} saldi={saldi} toast={showToast}/>}
         </div>
       </div>
       <Toast msg={toast.msg} kind={toast.kind}/>
@@ -1884,8 +2180,57 @@ function App(){
 }
 
 /* ============================================================
-   LOGIN  —  semplice gate con sola password
+   LOGIN
    ============================================================ */
+function Splash({text}){
+  return (<div className="login-shell"><div className="login-card" style={{textAlign:'center'}}>
+    <div className="logo serif">Contabilità Personale</div><div className="tag">{text}</div>
+  </div></div>);
+}
+
+/* login con Firebase Authentication (email + password) */
+function LoginAuth(){
+  const [email,setEmail]=useState('');
+  const [pw,setPw]=useState('');
+  const [err,setErr]=useState('');
+  const [busy,setBusy]=useState(false);
+  const [info,setInfo]=useState('');
+  function submit(){
+    setErr(''); setInfo(''); setBusy(true);
+    auth.signInWithEmailAndPassword(email.trim(),pw)
+      .catch(e=>{
+        const m={'auth/invalid-email':'Email non valida','auth/user-not-found':'Utente inesistente',
+          'auth/wrong-password':'Password errata','auth/invalid-credential':'Credenziali errate',
+          'auth/too-many-requests':'Troppi tentativi, riprova più tardi'};
+        setErr(m[e.code]||'Accesso non riuscito');
+      })
+      .finally(()=>setBusy(false));
+  }
+  function reset(){
+    if(!email.trim()){ setErr('Inserisci la tua email per il reset'); return; }
+    auth.sendPasswordResetEmail(email.trim())
+      .then(()=>setInfo('Email di reset inviata'))
+      .catch(()=>setErr('Impossibile inviare il reset'));
+  }
+  return (
+    <div className="login-shell">
+      <div className="login-card">
+        <div className="logo serif">Contabilità Personale</div>
+        <div className="tag">Accedi con le tue credenziali</div>
+        {err && <div className="err">{err}</div>}
+        {info && <div className="err" style={{background:'var(--accent-soft)',color:'var(--accent-ink)'}}>{info}</div>}
+        <div className="field"><label>Email</label>
+          <input type="email" value={email} autoFocus onChange={e=>{setEmail(e.target.value);setErr('');}} onKeyDown={e=>{if(e.key==='Enter')submit();}}/></div>
+        <div className="field"><label>Password</label>
+          <input type="password" value={pw} onChange={e=>{setPw(e.target.value);setErr('');}} onKeyDown={e=>{if(e.key==='Enter')submit();}}/></div>
+        <button className="btn accent" onClick={submit} disabled={busy}>{busy?'Accesso…':'Accedi'}</button>
+        <button className="btn ghost sm" onClick={reset} style={{marginTop:8}}>Password dimenticata?</button>
+      </div>
+    </div>
+  );
+}
+
+/* login semplice (solo password) — fallback senza Firebase */
 function Login({onOk}){
   const [pw,setPw]=useState('');
   const [err,setErr]=useState('');
@@ -1894,26 +2239,31 @@ function Login({onOk}){
     else setErr('Password errata');
   }
   return (
-    <div className="login-shell">
-      <div className="login-card">
-        <div className="logo serif">Contabilità Personale</div>
-        <div className="tag">Inserisci la password per accedere</div>
-        {err && <div className="err">{err}</div>}
-        <div className="field">
-          <label>Password</label>
-          <input type="password" value={pw} autoFocus
-            onChange={e=>{setPw(e.target.value);setErr('');}}
-            onKeyDown={e=>{ if(e.key==='Enter') submit(); }}/>
-        </div>
-        <button className="btn accent" onClick={submit}>Accedi</button>
-      </div>
-    </div>
+    <div className="login-shell"><div className="login-card">
+      <div className="logo serif">Contabilità Personale</div>
+      <div className="tag">Inserisci la password per accedere</div>
+      {err && <div className="err">{err}</div>}
+      <div className="field"><label>Password</label>
+        <input type="password" value={pw} autoFocus onChange={e=>{setPw(e.target.value);setErr('');}} onKeyDown={e=>{if(e.key==='Enter')submit();}}/></div>
+      <button className="btn accent" onClick={submit}>Accedi</button>
+    </div></div>
   );
 }
 
 function Root(){
-  const [unlocked,setUnlocked]=useState(()=>{ try{ return sessionStorage.getItem('cp_unlocked')==='1'; }catch(e){ return false; } });
-  if(!unlocked) return <Login onOk={()=>setUnlocked(true)}/>;
+  const [user,setUser]=useState(undefined);
+  const [pwUnlocked,setPwUnlocked]=useState(()=>{ try{ return sessionStorage.getItem('cp_unlocked')==='1'; }catch(e){ return false; } });
+  useEffect(()=>{
+    if(firebaseReady && auth){ const unsub=auth.onAuthStateChanged(u=>setUser(u||null)); return unsub; }
+    setUser(null);
+  },[]);
+  if(firebaseReady && auth){
+    if(user===undefined) return <Splash text="Caricamento…"/>;
+    if(!user) return <LoginAuth/>;
+    return <App authUser={user} onLogout={()=>auth.signOut()}/>;
+  }
+  // fallback senza Firebase Auth: password locale
+  if(!pwUnlocked) return <Login onOk={()=>setPwUnlocked(true)}/>;
   return <App/>;
 }
 
