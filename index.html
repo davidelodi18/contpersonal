@@ -2211,7 +2211,7 @@ function PageImport({onAddMany, mappa, setMappa, categorie, setCategorie, toast}
 
   function detect(headers){
     const H=headers.map(h=>normKey(h));
-    const find=cands=>{ for(let i=0;i<H.length;i++){ if(cands.some(c=>H[i]===c||H[i].includes(c))) return i; } return -1; };
+    const find=cands=>{ for(let i=0;i<H.length;i++){ if(cands.some(c=>{const cc=c.toUpperCase(); return H[i]===cc||H[i].includes(cc);})) return i; } return -1; };
     return {
       data:find(['data','date','giorno','valuta']),
       conto:find(['conto','metodo','c c','account']),
