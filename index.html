@@ -2231,8 +2231,14 @@ function PageImport({onAddMany, mappa, setMappa, categorie, setCategorie, toast}
       const out=[];
       for(let i=1;i<aoa.length;i++){
         const r=aoa[i]; if(!r||r.every(c=>c===''||c==null)) continue;
-        let imp=parseFloat(String(r[col.importo]).replace(/\./g,'').replace(',','.'));
-        if(isNaN(imp)) imp=parseFloat(r[col.importo]);
+        const raw=r[col.importo];
+        let imp;
+        if(typeof raw==='number'){ imp=raw; }
+        else {
+          let str=String(raw).replace(/[€\s]/g,'').trim();
+          if(str.includes(',')){ str=str.replace(/\./g,'').replace(',','.'); } // formato italiano 1.234,56
+          imp=parseFloat(str);
+        }
         if(isNaN(imp)||imp===0) continue;
         let tipo;
         if(col.tipo>=0){ const t=normKey(r[col.tipo]); tipo=(t.startsWith('E')||t.includes('ENTRAT')||t==='D')?'E':'U'; }
