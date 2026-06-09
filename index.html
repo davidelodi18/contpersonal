@@ -1000,7 +1000,7 @@ function PageDashboard({scritture, saldi, goto}){
         </div>}
 
       <div className="kpi-grid">
-        <Kpi accent label="Disponibilità liquide (contabili)" value={eur(totLiqContabile)} hint={`Saldo reale movimenti: ${eur(totLiqReale)}`}/>
+        <Kpi accent label="Disponibilità liquide (reali)" value={eur(totLiqReale)} hint={`Saldo contabile: ${eur(totLiqContabile)}`}/>
         <Kpi label="Immobilizzazioni nette" value={eur(r2(immMat+immFin-fondi))} hint={`Materiali ${eur(immMat)} · Finanziarie ${eur(immFin)} · F.do ${eur(fondi)}`}/>
         <Kpi label="Patrimonio netto" value={eur(pn)}/>
         <Kpi label="Risultato d'esercizio" value={eur(risultato)} neg={risultato<0} hint={`Ricavi ${eur(ricavi)} · Costi ${eur(costi)}`}/>
@@ -1013,9 +1013,9 @@ function PageDashboard({scritture, saldi, goto}){
             <div className="head">
               <span className="name">{x.nome}</span>
             </div>
-            <div className={'saldo'+(x.contabile<0?' neg':'')}>{eur(x.contabile)}</div>
+            <div className={'saldo'+(x.reale<0?' neg':'')}>{eur(x.reale)}</div>
             <div className="delta">
-              reale {eur(x.reale)} · diff <span className={Math.abs(x.diff)<0.01?'':(x.diff<0?'neg':'pos')}>{x.diff>0?'+':''}{num2(x.diff)} €</span>
+              contabile {eur(x.contabile)} · diff <span className={Math.abs(x.diff)<0.01?'':(x.diff<0?'neg':'pos')}>{x.diff>0?'+':''}{num2(x.diff)} €</span>
             </div>
           </div>
         ))}
