@@ -935,13 +935,17 @@ function calcSaldi(scritture){
   Object.keys(m).forEach(k=>{ m[k].dare=r2(m[k].dare); m[k].avere=r2(m[k].avere); m[k].saldo=r2(m[k].dare-m[k].avere); });
   return m;
 }
+/* Rettifiche al saldo reale (allineamento movimenti storici incompleti).
+   Cassa: i movimenti importati gennaio-maggio davano 119,50 ma la cassa effettiva è 0. */
+const RETTIFICHE_REALI = { 3: -119.50 };
+
 function saldoRealeConto(cod, scritture){
   const ini = SALDI_INIZIALI[cod] || 0;
   let e=0,u=0;
   MOVIMENTI.forEach(mv=>{ if(mv.cod===cod){ if(mv.tipo==='E') e+=mv.imp; else u+=mv.imp; } });
   let manuali=0;
   (scritture||[]).forEach(s=>{ if(s.origine==='manuale') s.righe.forEach(r=>{ if(r.c===cod) manuali += (r.d||0)-(r.a||0); }); });
-  return r2(ini + e - u + manuali);
+  return r2(ini + e - u + manuali + (RETTIFICHE_REALI[cod]||0));
 }
 
 /* ============================================================
