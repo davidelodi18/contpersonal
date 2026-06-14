@@ -20,25 +20,25 @@
 <style>
 
   :root {
-    --bg: #f7f6f2;
+    --bg: #f3f6fb;
     --panel: #ffffff;
-    --panel-2: #fbfaf6;
-    --ink: #1a1a1a;
-    --ink-2: #4a4a4a;
-    --ink-3: #8a8a82;
-    --rule: #e8e6df;
-    --rule-2: #d8d5cc;
-    --accent: #2d5e3e;       /* verde campo, sobrio */
-    --accent-soft: #e8efe9;
-    --accent-ink: #1a3d27;
-    --gold: #b8954b;
-    --danger: #b54343;
+    --panel-2: #f6f9fd;
+    --ink: #16223d;
+    --ink-2: #45506a;
+    --ink-3: #8791a6;
+    --rule: #e3e9f2;
+    --rule-2: #cdd6e5;
+    --accent: #1f4f8f;       /* blu sobrio */
+    --accent-soft: #e6edf8;
+    --accent-ink: #16335f;
+    --gold: #c08a3e;
+    --danger: #c0433f;
     --danger-soft: #fbecec;
-    --success: #2d5e3e;
+    --success: #2f7d4f;
     --warn: #c08020;
-    --shadow-sm: 0 1px 2px rgba(20,20,20,0.04), 0 0 0 1px rgba(20,20,20,0.04);
-    --shadow-md: 0 4px 16px rgba(20,20,20,0.06), 0 0 0 1px rgba(20,20,20,0.04);
-    --shadow-lg: 0 20px 50px rgba(20,20,20,0.12);
+    --shadow-sm: 0 1px 2px rgba(20,30,60,0.05), 0 0 0 1px rgba(20,30,60,0.05);
+    --shadow-md: 0 4px 16px rgba(20,30,60,0.08), 0 0 0 1px rgba(20,30,60,0.05);
+    --shadow-lg: 0 20px 50px rgba(20,30,60,0.15);
     --radius: 6px;
     --radius-lg: 10px;
   }
@@ -1054,7 +1054,7 @@ function PageDashboard({scritture, saldi, goto}){
     if(!chartRef.current || !window.Chart) return;
     const ctx = chartRef.current.getContext('2d');
     const ch = new Chart(ctx,{type:'bar',data:{labels:flusso.map(f=>f.m),datasets:[
-      {label:'Entrate',data:flusso.map(f=>f.e),backgroundColor:'#2d5e3e'},
+      {label:'Entrate',data:flusso.map(f=>f.e),backgroundColor:'#1f4f8f'},
       {label:'Uscite',data:flusso.map(f=>f.u),backgroundColor:'#b54343'},
     ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}},scales:{y:{ticks:{callback:v=>num2(v)}}}}});
     return ()=>ch.destroy();
@@ -2259,7 +2259,7 @@ function PageExport({scritture, cespiti, saldi, categorie, toast}){
       const st = isTot?{fontStyle:'bold',fillColor:[225,233,228]}:(isHead?{fontStyle:'bold',fillColor:[240,238,233]}:{});
       return [{content:r[0],styles:st},{content:(typeof r[1]==='number'?num2(r[1]):''),styles:{...st,halign:'right'}}];
     });
-    doc.autoTable({startY,head:[[aoa[0][0],aoa[0][1]]],body,styles:{fontSize:9,cellPadding:1.6},headStyles:{fillColor:[45,94,62]},columnStyles:{1:{halign:'right',cellWidth:40}}});
+    doc.autoTable({startY,head:[[aoa[0][0],aoa[0][1]]],body,styles:{fontSize:9,cellPadding:1.6},headStyles:{fillColor:[31,79,143]},columnStyles:{1:{halign:'right',cellWidth:40}}});
     return doc.lastAutoTable.finalY;
   }
   function drawBilancioVerifica(doc){
@@ -2271,7 +2271,7 @@ function PageExport({scritture, cespiti, saldi, categorie, toast}){
     }});
     rows.push([{content:'TOTALI',colSpan:3,styles:{fontStyle:'bold'}},{content:num2(r2(td)),styles:{fontStyle:'bold'}},{content:num2(r2(ta)),styles:{fontStyle:'bold'}},'']);
     doc.autoTable({startY:36,head:[['Cod','Conto','Categoria','Dare','Avere','Saldo']],body:rows,
-      styles:{fontSize:8,cellPadding:1.5},headStyles:{fillColor:[45,94,62]},columnStyles:{3:{halign:'right'},4:{halign:'right'},5:{halign:'right'}}});
+      styles:{fontSize:8,cellPadding:1.5},headStyles:{fillColor:[31,79,143]},columnStyles:{3:{halign:'right'},4:{halign:'right'},5:{halign:'right'}}});
   }
   function drawSPCE(doc){
     pdfHeader(doc,'Stato Patrimoniale e Conto Economico');
@@ -2291,7 +2291,7 @@ function PageExport({scritture, cespiti, saldi, categorie, toast}){
     body.push([{content:'Flusso del periodo',styles:{fontStyle:'bold'}},...rf.mesi.map(k=>({content:num2(rf.flusso[k]),styles:{fontStyle:'bold'}})),{content:num2(rf.colTot.flusso),styles:{fontStyle:'bold'}}]);
     body.push([{content:'Disponibilità finali',styles:{fontStyle:'bold'}},...rf.mesi.map(k=>({content:num2(rf.dispFin[k]),styles:{fontStyle:'bold'}})),{content:num2(rf.colTot.dispFin),styles:{fontStyle:'bold'}}]);
     const halign={}; rf.mesi.forEach((_,i)=>halign[i+1]={halign:'right'}); halign[rf.mesi.length+1]={halign:'right'};
-    doc.autoTable({startY:36,head:[['Voce',...rf.mesi.map(rfMonthLabel),'Totale']],body,styles:{fontSize:8,cellPadding:1.5},headStyles:{fillColor:[45,94,62]},columnStyles:halign});
+    doc.autoTable({startY:36,head:[['Voce',...rf.mesi.map(rfMonthLabel),'Totale']],body,styles:{fontSize:8,cellPadding:1.5},headStyles:{fillColor:[31,79,143]},columnStyles:halign});
   }
   function drawGiornale(doc){
     pdfHeader(doc,'Libro Giornale');
@@ -2300,12 +2300,12 @@ function PageExport({scritture, cespiti, saldi, categorie, toast}){
       body.push([{content:`${fmtDate(s.data)} — ${s.descr}`,colSpan:3,styles:{fontStyle:'bold',fillColor:[240,238,233]}}]);
       s.righe.forEach(r=>body.push([(r.d>0?'':'    ')+ (contoByCode[r.c]?.nome||('#'+r.c)), r.d>0?num2(r.d):'', r.a>0?num2(r.a):'']));
     });
-    doc.autoTable({startY:36,head:[['Conto','Dare','Avere']],body,styles:{fontSize:8,cellPadding:1.4},headStyles:{fillColor:[45,94,62]},columnStyles:{1:{halign:'right'},2:{halign:'right'}}});
+    doc.autoTable({startY:36,head:[['Conto','Dare','Avere']],body,styles:{fontSize:8,cellPadding:1.4},headStyles:{fillColor:[31,79,143]},columnStyles:{1:{halign:'right'},2:{halign:'right'}}});
   }
   function drawCespiti(doc){
     pdfHeader(doc,'Cespiti e Ammortamenti');
     const body=cespiti.map(c=>[c.nome,c.classe||'',num2(c.costoStorico||0),((c.aliquota||0)*100).toFixed(0)+'%',num2(r2((c.costoStorico||0)*(c.aliquota||0))),num2(c.fondo||0),num2(r2((c.costoStorico||0)-(c.fondo||0)))]);
-    doc.autoTable({startY:36,head:[['Cespite','Classe','Costo storico','Aliq.','Quota','Fondo','Valore netto']],body,styles:{fontSize:8,cellPadding:1.5},headStyles:{fillColor:[45,94,62]},columnStyles:{2:{halign:'right'},4:{halign:'right'},5:{halign:'right'},6:{halign:'right'}}});
+    doc.autoTable({startY:36,head:[['Cespite','Classe','Costo storico','Aliq.','Quota','Fondo','Valore netto']],body,styles:{fontSize:8,cellPadding:1.5},headStyles:{fillColor:[31,79,143]},columnStyles:{2:{halign:'right'},4:{halign:'right'},5:{halign:'right'},6:{halign:'right'}}});
   }
   function newDoc(landscape){ const {jsPDF}=window.jspdf; return new jsPDF({orientation:landscape?'landscape':'portrait',unit:'mm',format:'a4'}); }
   function exportBilancioPDF(){ if(!window.jspdf){toast('Libreria PDF non caricata','error');return;} const doc=newDoc(); drawBilancioVerifica(doc); doc.save(`Bilancio_di_Verifica_${todayISO()}.pdf`); toast('PDF generato','success'); }
@@ -2560,6 +2560,126 @@ function PageImport({onAddMany, mappa, setMappa, categorie, setCategorie, toast}
 
 
 /* ============================================================
+   PAGINA: CONTROLLER (contabilità analitica)
+   ============================================================ */
+function PageController({scritture, categorie, budget, setBudget}){
+  const [tab,setTab]=useState('budget');
+  const rf=useMemo(()=>buildRendiconto(scritture,categorie),[scritture,categorie]);
+  const actual={}; ['entrata','uscita','investimento'].forEach(sez=> rf.rows[sez].forEach(r=>{ actual[r.nome]={sezione:sez,val:r.tot}; }));
+  const cats=useMemo(()=>{
+    const m={};
+    (categorie||[]).forEach(c=>{ if(c.sezione!=='interno') m[c.nome]={nome:c.nome,sezione:c.sezione}; });
+    Object.keys(actual).forEach(n=>{ if(!m[n]) m[n]={nome:n,sezione:actual[n].sezione}; });
+    return Object.values(m);
+  },[categorie,rf]);
+
+  const [draft,setDraft]=useState(budget||{});
+  useEffect(()=>setDraft(budget||{}),[budget]);
+  const setB=(nome,val)=>setDraft(d=>({...d,[nome]:val}));
+  const commit=()=>{ const clean={}; Object.entries(draft).forEach(([k,v])=>{ const n=parseFloat(v); if(n>0) clean[k]=n; }); setBudget(clean); };
+
+  // % avanzamento anno solare
+  const avanz=useMemo(()=>{ const o=new Date(); const a=o.getFullYear(); const ini=new Date(a,0,1),fin=new Date(a,11,31); return Math.round(Math.max(0,Math.min(1,(o-ini)/(fin-ini)))*100); },[]);
+
+  const sezOrder=[{k:'entrata',l:'Entrate'},{k:'uscita',l:'Uscite'},{k:'investimento',l:'Investimenti'}];
+
+  // analisi chart
+  const chartRef=useRef(null);
+  useEffect(()=>{
+    if(tab!=='analisi'||!chartRef.current||!window.Chart) return;
+    const ent=rf.rows.entrata.slice(0,8), usc=rf.rows.uscita.slice(0,8);
+    const ctx=chartRef.current.getContext('2d');
+    const ch=new Chart(ctx,{type:'bar',data:{
+      labels:[...ent.map(r=>r.nome),...usc.map(r=>r.nome)],
+      datasets:[{label:'Importo',data:[...ent.map(r=>r.tot),...usc.map(r=>-r.tot)],
+        backgroundColor:[...ent.map(()=>'#1f4f8f'),...usc.map(()=>'#b54343')],borderRadius:4}]},
+      options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{callback:v=>num2(v)}}}}});
+    return ()=>ch.destroy();
+  },[tab,rf]);
+
+  const totBudget=sez=>r2(cats.filter(c=>c.sezione===sez).reduce((s,c)=>s+(parseFloat(draft[c.nome])||0),0));
+  const totActual=sez=>r2(cats.filter(c=>c.sezione===sez).reduce((s,c)=>s+((actual[c.nome]&&actual[c.nome].val)||0),0));
+
+  return (
+    <div>
+      <PageHead title="Controller" sub="Contabilità analitica · budget e consuntivo per categoria">
+        <div className="tipo-switch" style={{gridTemplateColumns:'1fr 1fr',width:240}}>
+          <button className={tab==='budget'?'active entrata':''} onClick={()=>setTab('budget')}>Budget vs Consuntivo</button>
+          <button className={tab==='analisi'?'active entrata':''} onClick={()=>setTab('analisi')}>Analisi</button>
+        </div>
+      </PageHead>
+
+      {tab==='budget' && <>
+        <div className="kpi-grid">
+          <Kpi label="Budget entrate" value={eur(totBudget('entrata'))} hint={`Consuntivo ${eur(totActual('entrata'))}`}/>
+          <Kpi label="Budget uscite" value={eur(totBudget('uscita'))} hint={`Consuntivo ${eur(totActual('uscita'))}`}/>
+          <Kpi accent label="Avanzamento anno" value={avanz+'%'} hint="Riferimento per il ritmo di spesa"/>
+        </div>
+        {sezOrder.map(sez=>{
+          const list=cats.filter(c=>c.sezione===sez.k).sort((a,b)=>((actual[b.nome]&&actual[b.nome].val)||0)-((actual[a.nome]&&actual[a.nome].val)||0));
+          if(list.length===0) return null;
+          const tB=totBudget(sez.k), tA=totActual(sez.k);
+          return (
+            <div key={sez.k} style={{marginBottom:18}}>
+              <div className="card-title serif" style={{fontSize:15,margin:'6px 0 8px'}}>{sez.l}</div>
+              <div className="tbl-wrap"><table className="tbl">
+                <thead><tr><th>Categoria</th><th className="num">Budget</th><th className="num">Consuntivo</th><th className="num">Scostamento</th><th className="num">% uso</th></tr></thead>
+                <tbody>
+                  {list.map(c=>{
+                    const a=(actual[c.nome]&&actual[c.nome].val)||0;
+                    const b=parseFloat(draft[c.nome])||0;
+                    const scost=r2(a-b);
+                    const perc=b>0?Math.round(a/b*100):null;
+                    const bad = sez.k==='entrata' ? scost<0 : scost>0; // entrate sotto budget o uscite sopra budget
+                    return (
+                      <tr key={c.nome}>
+                        <td>{c.nome}</td>
+                        <td className="num"><input type="number" step="0.01" value={draft[c.nome]!=null?draft[c.nome]:''} onChange={e=>setB(c.nome,e.target.value)} onBlur={commit} placeholder="—" style={{width:90,textAlign:'right'}}/></td>
+                        <td className="num">{num2(a)}</td>
+                        <td className={'num '+(b>0?(bad?'neg':'pos'):'')}>{b>0?(scost>0?'+':'')+num2(scost):'—'}</td>
+                        <td className="num">{perc!=null?perc+'%':'—'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot><tr><td style={{fontWeight:600}}>Totale {sez.l}</td><td className="num" style={{fontWeight:600}}>{num2(tB)}</td><td className="num" style={{fontWeight:600}}>{num2(tA)}</td><td className="num" style={{fontWeight:600}}>{tB>0?num2(r2(tA-tB)):'—'}</td><td className="num"></td></tr></tfoot>
+              </table></div>
+            </div>
+          );
+        })}
+        <div style={{fontSize:12,color:'var(--ink-3)',marginTop:6,fontStyle:'italic'}}>Imposta un budget annuo per categoria nella colonna Budget (si salva uscendo dal campo). Il consuntivo è calcolato dalle scritture.</div>
+      </>}
+
+      {tab==='analisi' && <>
+        <div className="kpi-grid">
+          <Kpi accent label="Totale entrate" value={eur(rf.colTot.totEnt)}/>
+          <Kpi label="Totale uscite" value={eur(rf.colTot.totUsc)}/>
+          <Kpi label="Margine (entrate − uscite)" value={eur(r2(rf.colTot.totEnt-rf.colTot.totUsc))} neg={(rf.colTot.totEnt-rf.colTot.totUsc)<0}/>
+          {rf.colTot.totInv>0 && <Kpi label="Investimenti" value={eur(rf.colTot.totInv)}/>}
+        </div>
+        <div className="card flat">
+          <div className="card-title">Categorie principali (entrate in verde, uscite in rosso)</div>
+          <div style={{height:Math.max(260, (rf.rows.entrata.slice(0,8).length+rf.rows.uscita.slice(0,8).length)*30)}}><canvas ref={chartRef}></canvas></div>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginTop:16}}>
+          {sezOrder.filter(s=>rf.rows[s.k].length).map(sez=>(
+            <div key={sez.k} className="card flat">
+              <div className="card-title">{sez.l} per categoria</div>
+              <table className="tbl"><tbody>
+                {rf.rows[sez.k].map(r=>{
+                  const tot=totActual(sez.k)||1;
+                  return <tr key={r.nome}><td>{r.nome}</td><td className="num">{num2(r.tot)}</td><td className="num" style={{color:'var(--ink-3)',width:54}}>{Math.round(r.tot/tot*100)}%</td></tr>;
+                })}
+              </tbody></table>
+            </div>
+          ))}
+        </div>
+      </>}
+    </div>
+  );
+}
+
+/* ============================================================
    PAGINA: CATEGORIE (rendiconto)
    ============================================================ */
 function PageCategorie({categorie, setCategorie, scritture, toast}){
@@ -2633,6 +2753,7 @@ const NAV = [
     {id:'pivot',ico:'▦',label:'Pivot Conti'},
     {id:'bilancio',ico:'⚖',label:'Bilancio di Verifica'},
     {id:'rendiconto',ico:'~',label:'Rendiconto Finanz.'},
+    {id:'controller',ico:'◎',label:'Controller'},
   ]},
   {sec:'Anagrafiche',items:[
     {id:'pianoconti',ico:'#',label:'Piano dei Conti'},
@@ -2657,6 +2778,7 @@ function App({authUser, onLogout}){
   const [cespiti,setCespiti]=useState([]);
   const [mappa,setMappaState]=useState({});
   const [categorie,setCategorieState]=useState(seedCategorie());
+  const [budget,setBudgetState]=useState({});
   const [ready,setReady]=useState(false);
   const [page,setPage]=useState('dashboard');
   const [menuOpen,setMenuOpen]=useState(false);
@@ -2683,10 +2805,12 @@ function App({authUser, onLogout}){
       db.ref('mappaCategorie').on('value',snap=>setMappaState(snap.val()||{}));
       const catref=db.ref('categorieRF');
       catref.on('value',snap=>{ const v=snap.val(); if(v==null){ catref.set(seedCategorie()); return; } setCategorieState(Array.isArray(v)?v.filter(Boolean):Object.values(v)); });
+      db.ref('budget').on('value',snap=>setBudgetState(snap.val()||{}));
     } else {
       setScritture(loadScritture()); setCespiti(loadCespiti()); setReady(true);
       try{ setMappaState(JSON.parse(localStorage.getItem('contabilita_mappa_v1')||'{}')); }catch(e){}
       try{ const c=JSON.parse(localStorage.getItem('contabilita_cat_v1')||'null'); if(c) setCategorieState(c); }catch(e){}
+      try{ setBudgetState(JSON.parse(localStorage.getItem('contabilita_budget_v1')||'{}')); }catch(e){}
     }
   },[]);
 
@@ -2722,6 +2846,11 @@ function App({authUser, onLogout}){
     if(firebaseReady){ db.ref('categorieRF').set(list); }
     else { try{ localStorage.setItem('contabilita_cat_v1', JSON.stringify(list)); }catch(e){} }
   };
+  const setBudget = obj => {
+    setBudgetState(obj);
+    if(firebaseReady){ db.ref('budget').set(obj); }
+    else { try{ localStorage.setItem('contabilita_budget_v1', JSON.stringify(obj)); }catch(e){} }
+  };
   const updateCespiti = arr => {
     if(firebaseReady){ const obj={}; arr.forEach(c=>{ const {id,...rest}=c; obj[id]=rest; }); db.ref('cespiti').set(obj); }
     else { setCespiti(arr); saveCespiti(arr); }
@@ -2749,7 +2878,7 @@ function App({authUser, onLogout}){
       <div className="topbar">
         <button className="menu-btn" onClick={()=>setMenuOpen(o=>!o)}>☰</button>
         <h1 className="serif">Contabilità Personale<span className="sub">partita doppia</span></h1>
-        <span className="badge desktop-only" style={firebaseReady?{borderColor:'#3a5a42',color:'#9ec7a8'}:{}}>{firebaseReady?'● Firebase':'● Locale'}</span>
+        <span className="badge desktop-only" style={firebaseReady?{borderColor:'#2a4d86',color:'#9fc0ee'}:{}}>{firebaseReady?'● Firebase':'● Locale'}</span>
         <span className="badge desktop-only">{scritture.length} scritture</span>
         <button className="icon-btn" onClick={resetSeed}>↺ Reset</button>
         {onLogout && <button className="icon-btn" onClick={onLogout} title={authUser?authUser.email:''}>⎋ Esci</button>}
@@ -2778,6 +2907,7 @@ function App({authUser, onLogout}){
           {page==='pivot' && <PagePivotConti saldi={saldi}/>}
           {page==='bilancio' && <PageBilancio saldi={saldi}/>}
           {page==='rendiconto' && <PageRendiconto scritture={scritture} categorie={categorie}/>}
+          {page==='controller' && <PageController scritture={scritture} categorie={categorie} budget={budget} setBudget={setBudget}/>}
           {page==='pianoconti' && <PagePianoConti saldi={saldi}/>}
           {page==='cespiti' && <PageCespiti cespiti={cespiti} setCespiti={updateCespiti} toast={showToast}/>}
           {page==='ammortamenti' && <PageAmmortamenti cespiti={cespiti} onAdd={addScrittura} updateCespiti={updateCespiti} toast={showToast}/>}
