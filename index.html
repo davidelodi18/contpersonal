@@ -2139,6 +2139,40 @@ function PagePianoConti({saldi}){
    PAGINA: EXPORT
    ============================================================ */
 function PageExport({scritture, cespiti, saldi, categorie, toast}){
+  const spce = ()=>{
+    const saldoOf=c=>(saldi[c.codice]||{saldo:0}).saldo;
+    const rc=cat=>CONTI.filter(c=>c.categoria===cat).map(c=>({nome:c.nome,saldo:saldoOf(c)})).filter(r=>Math.abs(r.saldo)>0.001);
+    const ss=cat=>r2(CONTI.filter(c=>c.categoria===cat).reduce((s,c)=>s+saldoOf(c),0));
+    const immMat=ss('IMM. MATERIALI'),immFin=ss('IMM. FINANZIARIE'),disp=ss('DISP. LIQUIDE'),fondi=ss('RETTIFICA ATTIVO');
+    const attivo=r2(immMat+immFin+disp+fondi);
+    const pn=ss('PATRIMONIO NETTO');
+    const ricavi=r2(CONTI.filter(c=>c.categoria==='RICAVI').reduce((s,c)=>s-saldoOf(c),0));
+    const costi=r2(CONTI.filter(c=>c.categoria==='COSTI').reduce((s,c)=>s+saldoOf(c),0));
+    const risultato=r2(ricavi-costi);
+    return {rc,immMat,immFin,disp,fondi,attivo,pn,passivoNetto:r2(-pn),ricavi,costi,risultato};
+  };
+  const spAoA = ()=>{
+    const d=spce(); const o=[['STATO PATRIMONIALE','€']];
+    o.push(['ATTIVO — Immobilizzazioni materiali','']); d.rc('IMM. MATERIALI').forEach(r=>o.push(['   '+r.nome,r.saldo]));
+    o.push(['Immobilizzazioni finanziarie','']); d.rc('IMM. FINANZIARIE').forEach(r=>o.push(['   '+r.nome,r.saldo]));
+    o.push(['Fondi ammortamento (−)','']); d.rc('RETTIFICA ATTIVO').forEach(r=>o.push(['   '+r.nome,r.saldo]));
+    o.push(['Disponibilità liquide','']); d.rc('DISP. LIQUIDE').forEach(r=>o.push(['   '+r.nome,r.saldo]));
+    o.push(['TOTALE ATTIVO',d.attivo]);
+    o.push(['PASSIVO E NETTO — Patrimonio netto','']); d.rc('PATRIMONIO NETTO').forEach(r=>o.push(['   '+r.nome,r2(-r.saldo)]));
+    o.push(["Risultato d'esercizio",d.risultato]);
+    o.push(['TOTALE PASSIVO E NETTO',r2(d.passivoNetto+d.risultato)]);
+    return o;
+  };
+  const ceAoA = ()=>{
+    const d=spce(); const o=[['CONTO ECONOMICO','€']];
+    o.push(['RICAVI','']); d.rc('RICAVI').forEach(r=>o.push(['   '+r.nome,r2(-r.saldo)]));
+    o.push(['TOTALE RICAVI',d.ricavi]);
+    o.push(['COSTI','']); d.rc('COSTI').forEach(r=>o.push(['   '+r.nome,r.saldo]));
+    o.push(['TOTALE COSTI',d.costi]);
+    o.push(["RISULTATO D'ESERCIZIO",d.risultato]);
+    return o;
+  };
+
   function buildWorkbook(){
     const wb=XLSX.utils.book_new();
     const add=(name,aoa)=>XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(aoa),name);
@@ -2189,6 +2223,10 @@ function PageExport({scritture, cespiti, saldi, categorie, toast}){
     CONTI.forEach(c=>pc.push([c.codice,c.nome,c.prospetto,c.categoria,c.eccedenza]));
     add('Piano dei Conti',pc);
 
+    // Stato Patrimoniale e Conto Economico
+    add('Stato Patrimoniale',spAoA());
+    add('Conto Economico',ceAoA());
+
     return wb;
   }
   function exportExcel(){
@@ -2206,17 +2244,25 @@ function PageExport({scritture, cespiti, saldi, categorie, toast}){
 
   // ---------- PDF ----------
   function pdfHeader(doc,titolo){
+    const cx=doc.internal.pageSize.getWidth()/2;
     doc.setFont('helvetica','bold'); doc.setFontSize(16);
-    doc.text('CONTABILITÀ PERSONALE',105,18,{align:'center'});
+    doc.text('CONTABILITÀ PERSONALE',cx,18,{align:'center'});
     doc.setFontSize(11); doc.setFont('helvetica','normal');
-    doc.text(titolo,105,25,{align:'center'});
+    doc.text(titolo,cx,25,{align:'center'});
     doc.setFontSize(9); doc.setTextColor(120);
-    doc.text(`Generato il ${new Date().toLocaleDateString('it-IT')}`,105,31,{align:'center'});
+    doc.text(`Generato il ${new Date().toLocaleDateString('it-IT')}`,cx,31,{align:'center'});
     doc.setTextColor(0);
   }
-  function exportBilancioPDF(){
-    if(!window.jspdf){ toast('Libreria PDF non caricata','error'); return; }
-    const {jsPDF}=window.jspdf; const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+  function finTable(doc,aoa,startY){
+    const body=aoa.slice(1).map(r=>{
+      const isHead=r[1]===''; const isTot=/^TOTALE|^RISULTATO/.test(r[0]);
+      const st = isTot?{fontStyle:'bold',fillColor:[225,233,228]}:(isHead?{fontStyle:'bold',fillColor:[240,238,233]}:{});
+      return [{content:r[0],styles:st},{content:(typeof r[1]==='number'?num2(r[1]):''),styles:{...st,halign:'right'}}];
+    });
+    doc.autoTable({startY,head:[[aoa[0][0],aoa[0][1]]],body,styles:{fontSize:9,cellPadding:1.6},headStyles:{fillColor:[45,94,62]},columnStyles:{1:{halign:'right',cellWidth:40}}});
+    return doc.lastAutoTable.finalY;
+  }
+  function drawBilancioVerifica(doc){
     pdfHeader(doc,'Bilancio di Verifica');
     let td=0,ta=0; const rows=[];
     CONTI.forEach(c=>{const s=saldi[c.codice]||{dare:0,avere:0,saldo:0}; if(s.dare||s.avere){
@@ -2225,13 +2271,15 @@ function PageExport({scritture, cespiti, saldi, categorie, toast}){
     }});
     rows.push([{content:'TOTALI',colSpan:3,styles:{fontStyle:'bold'}},{content:num2(r2(td)),styles:{fontStyle:'bold'}},{content:num2(r2(ta)),styles:{fontStyle:'bold'}},'']);
     doc.autoTable({startY:36,head:[['Cod','Conto','Categoria','Dare','Avere','Saldo']],body:rows,
-      styles:{fontSize:8,cellPadding:1.5},headStyles:{fillColor:[45,94,62]},
-      columnStyles:{3:{halign:'right'},4:{halign:'right'},5:{halign:'right'}}});
-    doc.save(`Bilancio_di_Verifica_${todayISO()}.pdf`); toast('PDF generato','success');
+      styles:{fontSize:8,cellPadding:1.5},headStyles:{fillColor:[45,94,62]},columnStyles:{3:{halign:'right'},4:{halign:'right'},5:{halign:'right'}}});
   }
-  function exportRendicontoPDF(){
-    if(!window.jspdf){ toast('Libreria PDF non caricata','error'); return; }
-    const {jsPDF}=window.jspdf; const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
+  function drawSPCE(doc){
+    pdfHeader(doc,'Stato Patrimoniale e Conto Economico');
+    let y=finTable(doc,spAoA(),36)+10;
+    if(y>235){ doc.addPage(); y=20; }
+    finTable(doc,ceAoA(),y);
+  }
+  function drawRendiconto(doc){
     pdfHeader(doc,'Rendiconto Finanziario');
     const rf=buildRendiconto(scritture,categorie);
     const body=[];
@@ -2243,23 +2291,39 @@ function PageExport({scritture, cespiti, saldi, categorie, toast}){
     body.push([{content:'Flusso del periodo',styles:{fontStyle:'bold'}},...rf.mesi.map(k=>({content:num2(rf.flusso[k]),styles:{fontStyle:'bold'}})),{content:num2(rf.colTot.flusso),styles:{fontStyle:'bold'}}]);
     body.push([{content:'Disponibilità finali',styles:{fontStyle:'bold'}},...rf.mesi.map(k=>({content:num2(rf.dispFin[k]),styles:{fontStyle:'bold'}})),{content:num2(rf.colTot.dispFin),styles:{fontStyle:'bold'}}]);
     const halign={}; rf.mesi.forEach((_,i)=>halign[i+1]={halign:'right'}); halign[rf.mesi.length+1]={halign:'right'};
-    doc.autoTable({startY:36,head:[['Voce',...rf.mesi.map(rfMonthLabel),'Totale']],body,
-      styles:{fontSize:8,cellPadding:1.5},headStyles:{fillColor:[45,94,62]},columnStyles:halign});
-    doc.save(`Rendiconto_${todayISO()}.pdf`); toast('PDF generato','success');
+    doc.autoTable({startY:36,head:[['Voce',...rf.mesi.map(rfMonthLabel),'Totale']],body,styles:{fontSize:8,cellPadding:1.5},headStyles:{fillColor:[45,94,62]},columnStyles:halign});
   }
-  function exportGiornalePDF(){
-    if(!window.jspdf){ toast('Libreria PDF non caricata','error'); return; }
-    const {jsPDF}=window.jspdf; const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+  function drawGiornale(doc){
     pdfHeader(doc,'Libro Giornale');
     const body=[];
     [...scritture].sort((a,b)=>(a.data||'').localeCompare(b.data||'')).forEach(s=>{
       body.push([{content:`${fmtDate(s.data)} — ${s.descr}`,colSpan:3,styles:{fontStyle:'bold',fillColor:[240,238,233]}}]);
       s.righe.forEach(r=>body.push([(r.d>0?'':'    ')+ (contoByCode[r.c]?.nome||('#'+r.c)), r.d>0?num2(r.d):'', r.a>0?num2(r.a):'']));
     });
-    doc.autoTable({startY:36,head:[['Conto','Dare','Avere']],body,
-      styles:{fontSize:8,cellPadding:1.4},headStyles:{fillColor:[45,94,62]},
-      columnStyles:{1:{halign:'right'},2:{halign:'right'}}});
-    doc.save(`Libro_Giornale_${todayISO()}.pdf`); toast('PDF generato','success');
+    doc.autoTable({startY:36,head:[['Conto','Dare','Avere']],body,styles:{fontSize:8,cellPadding:1.4},headStyles:{fillColor:[45,94,62]},columnStyles:{1:{halign:'right'},2:{halign:'right'}}});
+  }
+  function drawCespiti(doc){
+    pdfHeader(doc,'Cespiti e Ammortamenti');
+    const body=cespiti.map(c=>[c.nome,c.classe||'',num2(c.costoStorico||0),((c.aliquota||0)*100).toFixed(0)+'%',num2(r2((c.costoStorico||0)*(c.aliquota||0))),num2(c.fondo||0),num2(r2((c.costoStorico||0)-(c.fondo||0)))]);
+    doc.autoTable({startY:36,head:[['Cespite','Classe','Costo storico','Aliq.','Quota','Fondo','Valore netto']],body,styles:{fontSize:8,cellPadding:1.5},headStyles:{fillColor:[45,94,62]},columnStyles:{2:{halign:'right'},4:{halign:'right'},5:{halign:'right'},6:{halign:'right'}}});
+  }
+  function newDoc(landscape){ const {jsPDF}=window.jspdf; return new jsPDF({orientation:landscape?'landscape':'portrait',unit:'mm',format:'a4'}); }
+  function exportBilancioPDF(){ if(!window.jspdf){toast('Libreria PDF non caricata','error');return;} const doc=newDoc(); drawBilancioVerifica(doc); doc.save(`Bilancio_di_Verifica_${todayISO()}.pdf`); toast('PDF generato','success'); }
+  function exportSPCEPDF(){ if(!window.jspdf){toast('Libreria PDF non caricata','error');return;} const doc=newDoc(); drawSPCE(doc); doc.save(`Bilancio_SP_CE_${todayISO()}.pdf`); toast('PDF generato','success'); }
+  function exportRendicontoPDF(){ if(!window.jspdf){toast('Libreria PDF non caricata','error');return;} const doc=newDoc(true); drawRendiconto(doc); doc.save(`Rendiconto_${todayISO()}.pdf`); toast('PDF generato','success'); }
+  function exportGiornalePDF(){ if(!window.jspdf){toast('Libreria PDF non caricata','error');return;} const doc=newDoc(); drawGiornale(doc); doc.save(`Libro_Giornale_${todayISO()}.pdf`); toast('PDF generato','success'); }
+  function exportPacchettoPDF(){
+    if(!window.jspdf){toast('Libreria PDF non caricata','error');return;}
+    const doc=newDoc();
+    doc.setFont('helvetica','bold'); doc.setFontSize(26); doc.text('CONTABILITÀ PERSONALE',105,90,{align:'center'});
+    doc.setFontSize(13); doc.setFont('helvetica','normal'); doc.text('Pacchetto completo dei prospetti',105,103,{align:'center'});
+    doc.setFontSize(10); doc.setTextColor(120); doc.text(`Generato il ${new Date().toLocaleDateString('it-IT')}`,105,113,{align:'center'}); doc.setTextColor(0);
+    doc.addPage(); drawBilancioVerifica(doc);
+    doc.addPage(); drawSPCE(doc);
+    doc.addPage('a4','landscape'); drawRendiconto(doc);
+    doc.addPage('a4','portrait'); drawGiornale(doc);
+    doc.addPage(); drawCespiti(doc);
+    doc.save(`Pacchetto_completo_${todayISO()}.pdf`); toast('Pacchetto PDF generato','success');
   }
 
   const Card=({title,desc,sheets,btn,onClick,gold})=>(
@@ -2277,7 +2341,7 @@ function PageExport({scritture, cespiti, saldi, categorie, toast}){
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:16}}>
         <Card title="Esporta in Excel"
           desc="Cartella .xlsx con tutti i prospetti, pronta da aprire o ricaricare nel tuo foglio di lavoro."
-          sheets={['Libro Giornale','Movimenti','Cassa','Bilancio di Verifica','Rendiconto','Cespiti','Piano dei Conti']}
+          sheets={['Libro Giornale','Movimenti','Bilancio di Verifica','Stato Patrimoniale','Conto Economico','Rendiconto','Cespiti','Piano dei Conti']}
           btn="↓ Scarica Excel" onClick={exportExcel}/>
         <Card title="Backup dati (JSON)"
           desc="Copia di sicurezza di scritture e cespiti. Utile da conservare prima di modifiche importanti."
@@ -2288,9 +2352,16 @@ function PageExport({scritture, cespiti, saldi, categorie, toast}){
           <div style={{color:'var(--ink-2)',fontSize:13,flex:1}}>Documenti stampabili dei prospetti principali, pronti da archiviare o condividere.</div>
           <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
             <button className="btn" onClick={exportBilancioPDF}>Bilancio di Verifica</button>
+            <button className="btn" onClick={exportSPCEPDF}>Stato Patrim. + Conto Econ.</button>
             <button className="btn" onClick={exportRendicontoPDF}>Rendiconto</button>
             <button className="btn" onClick={exportGiornalePDF}>Libro Giornale</button>
           </div>
+        </div>
+
+        <div className="card" style={{display:'flex',flexDirection:'column',gap:10,borderColor:'var(--accent)',background:'var(--accent-soft)'}}>
+          <div className="card-title serif" style={{fontSize:16}}>Pacchetto completo</div>
+          <div style={{color:'var(--ink-2)',fontSize:13,flex:1}}>Un unico PDF con tutti i prospetti: bilancio di verifica, stato patrimoniale, conto economico, rendiconto finanziario, libro giornale e cespiti.</div>
+          <button className="btn accent" style={{alignSelf:'flex-start'}} onClick={exportPacchettoPDF}>↓ Scarica pacchetto PDF</button>
         </div>
       </div>
     </div>
