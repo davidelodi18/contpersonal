@@ -1913,6 +1913,164 @@ function PageSnapshot({scritture}){
 }
 
 /* ============================================================
+   PAGINA: CHIUSURA MENSILE  (report, sola lettura)
+   ============================================================ */
+function naturaCE(c){
+  const e=(c.eccedenza||'').toUpperCase().trim();
+  if(e==='DARE/AVERE') return null;
+  if(e.indexOf('AVERE')===0) return 'R';
+  if(e.indexOf('DARE')===0) return 'C';
+  return null;
+}
+function PageChiusura({scritture}){
+  const mesi = useMemo(()=>{
+    const set=new Set();
+    scritture.forEach(s=>{ const k=rfMonthKey(s.data); if(k) set.add(k); });
+    return [...set].sort();
+  },[scritture]);
+  const [mese,setMese]=useState('');
+  const mk = mese || mesi[mesi.length-1] || '';
+  const label = k => k ? rfMonthLabel(k)+' '+k.slice(0,4) : '';
+
+  const rep = useMemo(()=>{
+    if(!mk) return null;
+    // 1) Liquidità: roll-forward saldo iniziale + entrate - uscite = saldo finale
+    const liq = LIQ_CODES.map(cod=>{
+      let opening=0, entrate=0, uscite=0;
+      scritture.forEach(s=>{ const k=rfMonthKey(s.data); if(!k) return;
+        s.righe.forEach(r=>{ if(r.c!==cod) return;
+          if(k<mk) opening += (r.d||0)-(r.a||0);
+          else if(k===mk){ entrate += (r.d||0); uscite += (r.a||0); }
+        });
+      });
+      opening=r2(opening); entrate=r2(entrate); uscite=r2(uscite);
+      return {cod, nome:contoByCode[cod].nome, opening, entrate, uscite, closing:r2(opening+entrate-uscite)};
+    });
+    const liqTot={
+      opening:r2(liq.reduce((s,x)=>s+x.opening,0)),
+      entrate:r2(liq.reduce((s,x)=>s+x.entrate,0)),
+      uscite:r2(liq.reduce((s,x)=>s+x.uscite,0)),
+      closing:r2(liq.reduce((s,x)=>s+x.closing,0)),
+    };
+    // movimenti del mese aggregati per conto
+    const movByCod={};
+    scritture.forEach(s=>{ if(rfMonthKey(s.data)!==mk) return;
+      s.righe.forEach(r=>{ if(!movByCod[r.c]) movByCod[r.c]={dare:0,avere:0}; movByCod[r.c].dare+=(r.d||0); movByCod[r.c].avere+=(r.a||0); });
+    });
+    // 2) Conto economico del mese
+    const ricavi=[], costi=[];
+    CONTI.forEach(c=>{ if(c.prospetto!=='CE') return; const m=movByCod[c.codice]; if(!m) return;
+      const dare=r2(m.dare), avere=r2(m.avere); if(!dare && !avere) return;
+      let nat=naturaCE(c), imp;
+      if(nat==='R') imp=r2(avere-dare);
+      else if(nat==='C') imp=r2(dare-avere);
+      else { const net=r2(avere-dare); if(net>=0){nat='R'; imp=net;} else {nat='C'; imp=r2(-net);} }
+      (nat==='R'?ricavi:costi).push({cod:c.codice,nome:c.nome,imp});
+    });
+    const totRicavi=r2(ricavi.reduce((s,x)=>s+x.imp,0));
+    const totCosti=r2(costi.reduce((s,x)=>s+x.imp,0));
+    const risultato=r2(totRicavi-totCosti);
+    // 3) Movimenti patrimoniali del mese (conti SP non liquidi)
+    const patr=[];
+    CONTI.forEach(c=>{ if(!c.prospetto.includes('SP')) return; if(LIQ_CODES.includes(c.codice)) return;
+      const m=movByCod[c.codice]; if(!m) return; const varz=r2((m.dare||0)-(m.avere||0)); if(!varz) return;
+      patr.push({cod:c.codice,nome:c.nome,cat:c.categoria,varz});
+    });
+    patr.sort((a,b)=>Math.abs(b.varz)-Math.abs(a.varz));
+    return {liq,liqTot,ricavi,costi,totRicavi,totCosti,risultato,patr};
+  },[scritture,mk]);
+
+  if(!mk) return (<div><PageHead title="Chiusura mensile" sub="Fotografia contabile del mese"/><div className="empty-state">Nessun dato disponibile.</div></div>);
+
+  const {liq,liqTot,ricavi,costi,totRicavi,totCosti,risultato,patr}=rep;
+  const deltaLiq=r2(liqTot.closing-liqTot.opening);
+
+  return (
+    <div>
+      <PageHead title="Chiusura mensile" sub={`Fotografia contabile — ${label(mk)}`}>
+        <select value={mk} onChange={e=>setMese(e.target.value)} style={{padding:'8px 12px',borderRadius:'var(--radius)',border:'1px solid var(--rule-2)',background:'var(--panel)',color:'var(--ink)',fontWeight:500}}>
+          {[...mesi].reverse().map(k=><option key={k} value={k}>{label(k)}</option>)}
+        </select>
+      </PageHead>
+
+      <div className="kpi-grid">
+        <Kpi label="Entrate liquidità" value={eur(liqTot.entrate)} hint={label(mk)}/>
+        <Kpi label="Uscite liquidità" value={eur(liqTot.uscite)} hint={label(mk)}/>
+        <Kpi label="Δ Liquidità" value={eur(deltaLiq)} neg={deltaLiq<0} hint="rispetto a fine mese prec."/>
+        <Kpi accent label="Risultato economico" value={eur(risultato)} neg={risultato<0} hint={risultato>=0?'utile del mese':'perdita del mese'}/>
+      </div>
+
+      <div className="serif" style={{fontSize:18,margin:'26px 0 10px'}}>Liquidità — movimenti del mese</div>
+      <div className="tbl-wrap">
+        <table className="tbl">
+          <thead><tr><th>Conto</th><th className="num">Saldo iniziale</th><th className="num">Entrate</th><th className="num">Uscite</th><th className="num">Saldo finale</th></tr></thead>
+          <tbody>
+            {liq.map(x=>(
+              <tr key={x.cod}>
+                <td>{x.nome}</td>
+                <td className="num">{num2(x.opening)}</td>
+                <td className="num pos">{x.entrate?'+'+num2(x.entrate):num2(0)}</td>
+                <td className="num neg">{x.uscite?'−'+num2(x.uscite):num2(0)}</td>
+                <td className="num"><b>{num2(x.closing)}</b></td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot><tr className="rf-tot strong">
+            <td>Totale liquidità</td>
+            <td className="num">{num2(liqTot.opening)}</td>
+            <td className="num pos">{liqTot.entrate?'+'+num2(liqTot.entrate):num2(0)}</td>
+            <td className="num neg">{liqTot.uscite?'−'+num2(liqTot.uscite):num2(0)}</td>
+            <td className="num">{num2(liqTot.closing)}</td>
+          </tr></tfoot>
+        </table>
+      </div>
+
+      <div className="serif" style={{fontSize:18,margin:'26px 0 10px'}}>Conto economico del mese</div>
+      <div className="tbl-wrap">
+        <table className="tbl">
+          <thead><tr><th>Voce</th><th className="num">Importo</th></tr></thead>
+          <tbody>
+            <tr><td style={{fontWeight:700,paddingTop:10}}>Ricavi</td><td></td></tr>
+            {ricavi.length===0 && <tr><td colSpan="2" style={{color:'var(--ink-3)',fontStyle:'italic',paddingLeft:22}}>Nessun ricavo nel mese</td></tr>}
+            {ricavi.map(x=><tr key={x.cod}><td style={{paddingLeft:22}}>{x.nome}</td><td className="num pos">{num2(x.imp)}</td></tr>)}
+            <tr className="rf-tot strong"><td>Totale ricavi</td><td className="num pos">{num2(totRicavi)}</td></tr>
+            <tr><td style={{fontWeight:700,paddingTop:10}}>Costi</td><td></td></tr>
+            {costi.length===0 && <tr><td colSpan="2" style={{color:'var(--ink-3)',fontStyle:'italic',paddingLeft:22}}>Nessun costo nel mese</td></tr>}
+            {costi.map(x=><tr key={x.cod}><td style={{paddingLeft:22}}>{x.nome}</td><td className="num neg">{num2(x.imp)}</td></tr>)}
+            <tr className="rf-tot strong"><td>Totale costi</td><td className="num neg">{num2(totCosti)}</td></tr>
+          </tbody>
+          <tfoot><tr className="rf-tot strong">
+            <td>Risultato del mese</td>
+            <td className={'num '+(risultato<0?'neg':'pos')}>{risultato>=0?'+':'−'}{num2(Math.abs(risultato))}</td>
+          </tr></tfoot>
+        </table>
+      </div>
+
+      <div className="serif" style={{fontSize:18,margin:'26px 0 10px'}}>Movimenti patrimoniali del mese</div>
+      <div className="tbl-wrap">
+        <table className="tbl">
+          <thead><tr><th>Conto</th><th>Categoria</th><th className="num">Variazione</th></tr></thead>
+          <tbody>
+            {patr.length===0 && <tr><td colSpan="3" style={{color:'var(--ink-3)',fontStyle:'italic'}}>Nessun movimento patrimoniale nel mese</td></tr>}
+            {patr.map(x=>(
+              <tr key={x.cod}>
+                <td>{x.nome}</td>
+                <td style={{fontSize:11,color:'var(--ink-3)'}}>{x.cat}</td>
+                <td className={'num '+(x.varz<0?'neg':'pos')}>{x.varz>=0?'+':'−'}{num2(Math.abs(x.varz))}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{fontSize:12,color:'var(--ink-3)',marginTop:14,fontStyle:'italic'}}>
+        Report ricalcolato in tempo reale dal libro giornale — nessun dato viene scritto. La variazione patrimoniale è il Dare − Avere del conto nel mese (positiva = aumento di attività / riduzione di passività). La Δ liquidità può differire dal risultato economico per effetto di investimenti, giroconti e movimenti patrimoniali.
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
    PAGINA: CESPITI
    ============================================================ */
 function PageCespiti({cespiti,setCespiti,toast}){
@@ -2742,6 +2900,7 @@ const NAV = [
   {sec:'Panoramica',items:[
     {id:'dashboard',ico:'◫',label:'Dashboard'},
     {id:'snapshot',ico:'▤',label:'Snapshot mensile'},
+    {id:'chiusura',ico:'⊟',label:'Chiusura mensile'},
   ]},
   {sec:'Registrazioni',items:[
     {id:'nuova',ico:'+',label:'Nuova scrittura'},
@@ -2900,6 +3059,7 @@ function App({authUser, onLogout}){
         <div className="main">
           {page==='dashboard' && <PageDashboard scritture={scritture} saldi={saldi} goto={nav}/>}
           {page==='snapshot' && <PageSnapshot scritture={scritture}/>}
+          {page==='chiusura' && <PageChiusura scritture={scritture}/>}
           {page==='nuova' && <PageNuova onAdd={addScrittura} toast={showToast} categorie={categorie}/>}
           {page==='import' && <PageImport onAddMany={addScritture} mappa={mappa} setMappa={setMappa} categorie={categorie} setCategorie={setCategorie} toast={showToast}/>}
           {page==='giornale' && <PageLibroGiornale scritture={scritture} onUpdate={updateScrittura} onDelete={deleteScrittura} toast={showToast} categorie={categorie}/>}
