@@ -1922,85 +1922,268 @@ function naturaCE(c){
   if(e.indexOf('DARE')===0) return 'C';
   return null;
 }
-function PageChiusura({scritture}){
+
+/* Motore di calcolo della chiusura: liquidità, conto economico, stato
+   patrimoniale e rendiconto finanziario per il mese `mk`, in modalità
+   'mensile' (solo il mese) o 'progressivo' (da inizio anno fino a `mk`).
+   È usato sia per il rendering a video sia per gli export, così restano
+   sempre allineati. */
+function buildChiusura(scritture, categorie, mk, mode){
+  if(!mk) return null;
+  const year = mk.slice(0,4);
+  const yearStart = year+'-01';
+  const isProg = mode==='progressivo';
+  const inFlow = k => isProg ? (k>=yearStart && k<=mk) : (k===mk);
+  const before = k => isProg ? (k<yearStart) : (k<mk);
+
+  /* 1) Liquidità — roll-forward (apertura + entrate − uscite = saldo finale) */
+  const liq = LIQ_CODES.map(cod=>{
+    let opening=0, entrate=0, uscite=0;
+    scritture.forEach(s=>{ const k=rfMonthKey(s.data); if(!k) return;
+      s.righe.forEach(r=>{ if(r.c!==cod) return;
+        if(before(k)) opening += (r.d||0)-(r.a||0);
+        else if(inFlow(k)){ entrate += (r.d||0); uscite += (r.a||0); }
+      });
+    });
+    opening=r2(opening); entrate=r2(entrate); uscite=r2(uscite);
+    return {cod, nome:contoByCode[cod].nome, opening, entrate, uscite, closing:r2(opening+entrate-uscite)};
+  });
+  const liqTot={
+    opening:r2(liq.reduce((s,x)=>s+x.opening,0)),
+    entrate:r2(liq.reduce((s,x)=>s+x.entrate,0)),
+    uscite:r2(liq.reduce((s,x)=>s+x.uscite,0)),
+    closing:r2(liq.reduce((s,x)=>s+x.closing,0)),
+  };
+
+  /* movimenti del periodo aggregati per conto (per il conto economico) */
+  const movByCod={};
+  scritture.forEach(s=>{ if(!inFlow(rfMonthKey(s.data))) return;
+    s.righe.forEach(r=>{ if(!movByCod[r.c]) movByCod[r.c]={dare:0,avere:0}; movByCod[r.c].dare+=(r.d||0); movByCod[r.c].avere+=(r.a||0); });
+  });
+
+  /* 2) Conto economico del periodo */
+  const ricavi=[], costi=[];
+  CONTI.forEach(c=>{ if(c.prospetto!=='CE') return; const m=movByCod[c.codice]; if(!m) return;
+    const dare=r2(m.dare), avere=r2(m.avere); if(!dare && !avere) return;
+    let nat=naturaCE(c), imp;
+    if(nat==='R') imp=r2(avere-dare);
+    else if(nat==='C') imp=r2(dare-avere);
+    else { const net=r2(avere-dare); if(net>=0){nat='R'; imp=net;} else {nat='C'; imp=r2(-net);} }
+    if(Math.abs(imp)<0.005) return;
+    (nat==='R'?ricavi:costi).push({cod:c.codice,nome:c.nome,imp});
+  });
+  ricavi.sort((a,b)=>b.imp-a.imp); costi.sort((a,b)=>b.imp-a.imp);
+  const totRicavi=r2(ricavi.reduce((s,x)=>s+x.imp,0));
+  const totCosti=r2(costi.reduce((s,x)=>s+x.imp,0));
+  const risultato=r2(totRicavi-totCosti);
+
+  /* 3) Stato patrimoniale — fotografia a fine mese (saldi cumulati k<=mk).
+     Il patrimonio è uno stock: NON dipende da mensile/progressivo. */
+  const sal={}; CONTI.forEach(c=>{ sal[c.codice]={dare:0,avere:0}; });
+  scritture.forEach(s=>{ const k=rfMonthKey(s.data); if(!k || k>mk) return;
+    s.righe.forEach(r=>{ if(!sal[r.c]) sal[r.c]={dare:0,avere:0}; sal[r.c].dare+=(r.d||0); sal[r.c].avere+=(r.a||0); });
+  });
+  const saldoOf=cod=>{ const s=sal[cod]||{dare:0,avere:0}; return r2((s.dare||0)-(s.avere||0)); };
+  const rowsCat=cat=>CONTI.filter(c=>c.categoria===cat).map(c=>({cod:c.codice,nome:c.nome,saldo:saldoOf(c.codice)})).filter(r=>Math.abs(r.saldo)>0.005);
+  const sumCat=cat=>r2(CONTI.filter(c=>c.categoria===cat).reduce((s,c)=>s+saldoOf(c.codice),0));
+  const immMat=sumCat('IMM. MATERIALI'), immFin=sumCat('IMM. FINANZIARIE'), disp=sumCat('DISP. LIQUIDE'), fondi=sumCat('RETTIFICA ATTIVO');
+  const attivo=r2(immMat+immFin+disp+fondi);
+  const pnSaldo=sumCat('PATRIMONIO NETTO');
+  const ricaviCum=r2(CONTI.filter(c=>c.categoria==='RICAVI').reduce((s,c)=>s-saldoOf(c.codice),0));
+  const costiCum=r2(CONTI.filter(c=>c.categoria==='COSTI').reduce((s,c)=>s+saldoOf(c.codice),0));
+  const risEserc=r2(ricaviCum-costiCum);
+  const pn=r2(-pnSaldo);
+  const totPassivoNetto=r2(pn+risEserc);
+  const sp={
+    immMat:rowsCat('IMM. MATERIALI'), immFin:rowsCat('IMM. FINANZIARIE'),
+    fondi:rowsCat('RETTIFICA ATTIVO'), disp:rowsCat('DISP. LIQUIDE'),
+    totImmMat:immMat, totImmFin:immFin, totFondi:fondi, totDisp:disp, attivo,
+    pnRows:rowsCat('PATRIMONIO NETTO').map(r=>({...r,saldo:r2(-r.saldo)})),
+    pn, risEserc, totPassivoNetto,
+    sbilancio:r2(attivo-totPassivoNetto)
+  };
+
+  /* 4) Rendiconto finanziario del periodo (riconciliato con la cassa) */
+  const rfFull=buildRendiconto(scritture,categorie);
+  const periodMonths=rfFull.mesi.filter(inFlow);
+  const sumRows=rows=>rows.map(r=>({nome:r.nome,imp:r2(periodMonths.reduce((s,k)=>s+(r.perMese[k]||0),0))})).filter(r=>Math.abs(r.imp)>0.005).sort((a,b)=>b.imp-a.imp);
+  const rfEnt=sumRows(rfFull.rows.entrata);
+  const rfUsc=sumRows(rfFull.rows.uscita);
+  const rfInv=sumRows(rfFull.rows.investimento);
+  const totEnt=r2(rfEnt.reduce((s,x)=>s+x.imp,0));
+  const totUsc=r2(rfUsc.reduce((s,x)=>s+x.imp,0));
+  const totInv=r2(rfInv.reduce((s,x)=>s+x.imp,0));
+  const flussoOper=r2(totEnt-totUsc-totInv);
+  const rfIni=liqTot.opening;
+  const rfFin=liqTot.closing;
+  const altri=r2(rfFin-rfIni-flussoOper);   // giroconti / apertura / movimenti non operativi
+  const rf={ini:rfIni, ent:rfEnt, usc:rfUsc, inv:rfInv, totEnt, totUsc, totInv, flussoOper, altri, fin:rfFin};
+
+  return {mk, year, mode, isProg, liq, liqTot, ricavi, costi, totRicavi, totCosti, risultato, sp, rf};
+}
+
+/* ============================================================
+   PAGINA: CHIUSURA MENSILE  (report, sola lettura)
+   ============================================================ */
+function PageChiusura({scritture, categorie, toast}){
   const mesi = useMemo(()=>{
     const set=new Set();
     scritture.forEach(s=>{ const k=rfMonthKey(s.data); if(k) set.add(k); });
     return [...set].sort();
   },[scritture]);
   const [mese,setMese]=useState('');
+  const [mode,setMode]=useState('mensile');
   const mk = mese || mesi[mesi.length-1] || '';
-  const label = k => k ? rfMonthLabel(k)+' '+k.slice(0,4) : '';
+  const meseNome = k => k ? rfMonthLabel(k)+' '+k.slice(0,4) : '';
+  const periodoLabel = mode==='progressivo'
+    ? (mk ? 'Gen–'+rfMonthLabel(mk)+' '+mk.slice(0,4) : '')
+    : meseNome(mk);
 
-  const rep = useMemo(()=>{
-    if(!mk) return null;
-    // 1) Liquidità: roll-forward saldo iniziale + entrate - uscite = saldo finale
-    const liq = LIQ_CODES.map(cod=>{
-      let opening=0, entrate=0, uscite=0;
-      scritture.forEach(s=>{ const k=rfMonthKey(s.data); if(!k) return;
-        s.righe.forEach(r=>{ if(r.c!==cod) return;
-          if(k<mk) opening += (r.d||0)-(r.a||0);
-          else if(k===mk){ entrate += (r.d||0); uscite += (r.a||0); }
-        });
+  const rep = useMemo(()=>buildChiusura(scritture,categorie,mk,mode),[scritture,categorie,mk,mode]);
+
+  /* ---------- EXPORT ---------- */
+  function slug(){ return (mode==='progressivo'?'Progressivo':'Mensile')+'_'+(mk||''); }
+
+  function liqAoA(){
+    const o=[['LIQUIDITÀ — '+periodoLabel,'','','',''],['Conto','Saldo iniziale','Entrate','Uscite','Saldo finale']];
+    rep.liq.forEach(x=>o.push([x.nome,x.opening,x.entrate,x.uscite,x.closing]));
+    o.push(['TOTALE LIQUIDITÀ',rep.liqTot.opening,rep.liqTot.entrate,rep.liqTot.uscite,rep.liqTot.closing]);
+    return o;
+  }
+  function ceAoA(){
+    const o=[['CONTO ECONOMICO — '+periodoLabel,''],['Voce','€']];
+    o.push(['RICAVI','']); rep.ricavi.forEach(x=>o.push(['   '+x.nome,x.imp]));
+    o.push(['Totale ricavi',rep.totRicavi]);
+    o.push(['COSTI','']); rep.costi.forEach(x=>o.push(['   '+x.nome,x.imp]));
+    o.push(['Totale costi',rep.totCosti]);
+    o.push(['RISULTATO DEL PERIODO',rep.risultato]);
+    return o;
+  }
+  function spAoA(){
+    const d=rep.sp; const o=[['STATO PATRIMONIALE — al '+meseNome(mk),''],['Voce','€']];
+    o.push(['ATTIVO','']);
+    o.push(['Immobilizzazioni materiali','']); d.immMat.forEach(r=>o.push(['   '+r.nome,r.saldo]));
+    o.push(['Immobilizzazioni finanziarie','']); d.immFin.forEach(r=>o.push(['   '+r.nome,r.saldo]));
+    o.push(['Fondi ammortamento (−)','']); d.fondi.forEach(r=>o.push(['   '+r.nome,r.saldo]));
+    o.push(['Disponibilità liquide','']); d.disp.forEach(r=>o.push(['   '+r.nome,r.saldo]));
+    o.push(['TOTALE ATTIVO',d.attivo]);
+    o.push(['PASSIVO E NETTO','']);
+    o.push(['Patrimonio netto','']); d.pnRows.forEach(r=>o.push(['   '+r.nome,r.saldo]));
+    o.push(["Risultato d'esercizio (progressivo)",d.risEserc]);
+    o.push(['TOTALE PASSIVO E NETTO',d.totPassivoNetto]);
+    if(Math.abs(d.sbilancio)>0.005) o.push(['Sbilancio da verificare',d.sbilancio]);
+    return o;
+  }
+  function rfAoA(){
+    const d=rep.rf; const o=[['RENDICONTO FINANZIARIO — '+periodoLabel,''],['Voce','€']];
+    o.push(['Disponibilità iniziali',d.ini]);
+    o.push(['ENTRATE OPERATIVE',d.totEnt]); d.ent.forEach(r=>o.push(['   '+r.nome,r.imp]));
+    o.push(['USCITE OPERATIVE',d.totUsc]); d.usc.forEach(r=>o.push(['   '+r.nome,r.imp]));
+    if(d.inv.length){ o.push(['INVESTIMENTI',d.totInv]); d.inv.forEach(r=>o.push(['   '+r.nome,r.imp])); }
+    o.push(['Flusso operativo / investimenti',d.flussoOper]);
+    if(Math.abs(d.altri)>0.005) o.push(['Giroconti e movimenti non operativi',d.altri]);
+    o.push(['DISPONIBILITÀ FINALI',d.fin]);
+    return o;
+  }
+
+  function exportExcel(){
+    if(!window.XLSX){ toast('Libreria Excel non caricata','error'); return; }
+    const wb=XLSX.utils.book_new();
+    const add=(name,aoa)=>XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(aoa),name);
+    const riep=[
+      ['CHIUSURA — '+(mode==='progressivo'?'progressivo (da inizio anno)':'mensile')],
+      ['Periodo',periodoLabel],
+      ['Generato il',new Date().toLocaleDateString('it-IT')],
+      [],
+      ['Indicatore','€'],
+      ['Entrate liquidità',rep.liqTot.entrate],
+      ['Uscite liquidità',rep.liqTot.uscite],
+      ['Δ Liquidità',r2(rep.liqTot.closing-rep.liqTot.opening)],
+      ['Liquidità a fine periodo',rep.liqTot.closing],
+      ['Risultato economico del periodo',rep.risultato],
+      ['Totale attivo (a fine mese)',rep.sp.attivo],
+    ];
+    add('Riepilogo',riep);
+    add('Liquidità',liqAoA());
+    add('Conto Economico',ceAoA());
+    add('Stato Patrimoniale',spAoA());
+    add('Rendiconto',rfAoA());
+    XLSX.writeFile(wb,'Chiusura_'+slug()+'.xlsx');
+    toast('Export Excel completato','success');
+  }
+
+  function exportPDF(){
+    if(!window.jspdf){ toast('Libreria PDF non caricata','error'); return; }
+    const {jsPDF}=window.jspdf;
+    const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+    const cx=doc.internal.pageSize.getWidth()/2;
+    doc.setFont('helvetica','bold'); doc.setFontSize(16);
+    doc.text('CHIUSURA CONTABILE',cx,18,{align:'center'});
+    doc.setFontSize(11); doc.setFont('helvetica','normal');
+    doc.text((mode==='progressivo'?'Progressivo da inizio anno — ':'Mensile — ')+periodoLabel,cx,25,{align:'center'});
+    doc.setFontSize(9); doc.setTextColor(120);
+    doc.text('Generato il '+new Date().toLocaleDateString('it-IT'),cx,31,{align:'center'});
+    doc.setTextColor(0);
+
+    const HEAD=[31,79,143], TOT=[225,233,228], SUB=[240,238,233];
+    const isBold=t=>/^(TOTALE|RISULTATO|DISPONIBILITÀ FINALI|ATTIVO|PASSIVO E NETTO|ENTRATE|USCITE|INVESTIMENTI)/.test(t)||/Flusso operativo/.test(t);
+    const isSub=t=>/^(RICAVI|COSTI|Immobilizzazioni|Fondi|Disponibilità liquide|Patrimonio netto)$/.test(t);
+
+    // Liquidità (5 colonne)
+    const liqBody=rep.liq.map(x=>[x.nome,num2(x.opening),x.entrate?'+'+num2(x.entrate):num2(0),x.uscite?'−'+num2(x.uscite):num2(0),num2(x.closing)]);
+    liqBody.push([{content:'TOTALE LIQUIDITÀ',styles:{fontStyle:'bold'}},{content:num2(rep.liqTot.opening),styles:{fontStyle:'bold'}},{content:'+'+num2(rep.liqTot.entrate),styles:{fontStyle:'bold'}},{content:'−'+num2(rep.liqTot.uscite),styles:{fontStyle:'bold'}},{content:num2(rep.liqTot.closing),styles:{fontStyle:'bold'}}]);
+    doc.autoTable({startY:37,head:[['Liquidità — '+periodoLabel,'Saldo iniz.','Entrate','Uscite','Saldo fin.']],body:liqBody,
+      styles:{fontSize:8,cellPadding:1.5},headStyles:{fillColor:HEAD},columnStyles:{1:{halign:'right'},2:{halign:'right'},3:{halign:'right'},4:{halign:'right'}}});
+
+    // helper per i prospetti a 2 colonne
+    const finTable=(aoa,startY)=>{
+      const body=aoa.slice(2).map(r=>{
+        const label=r[0], val=r[1], hasVal=(typeof val==='number');
+        const st = isBold(label)?{fontStyle:'bold',fillColor:TOT}:(isSub(label)?{fontStyle:'bold',fillColor:SUB}:{});
+        return [{content:label,styles:st},{content:hasVal?num2(val):'',styles:{...st,halign:'right'}}];
       });
-      opening=r2(opening); entrate=r2(entrate); uscite=r2(uscite);
-      return {cod, nome:contoByCode[cod].nome, opening, entrate, uscite, closing:r2(opening+entrate-uscite)};
-    });
-    const liqTot={
-      opening:r2(liq.reduce((s,x)=>s+x.opening,0)),
-      entrate:r2(liq.reduce((s,x)=>s+x.entrate,0)),
-      uscite:r2(liq.reduce((s,x)=>s+x.uscite,0)),
-      closing:r2(liq.reduce((s,x)=>s+x.closing,0)),
+      doc.autoTable({startY,head:[[aoa[0][0],'€']],body,styles:{fontSize:8.5,cellPadding:1.6},headStyles:{fillColor:HEAD},columnStyles:{1:{halign:'right',cellWidth:38}}});
+      return doc.lastAutoTable.finalY;
     };
-    // movimenti del mese aggregati per conto
-    const movByCod={};
-    scritture.forEach(s=>{ if(rfMonthKey(s.data)!==mk) return;
-      s.righe.forEach(r=>{ if(!movByCod[r.c]) movByCod[r.c]={dare:0,avere:0}; movByCod[r.c].dare+=(r.d||0); movByCod[r.c].avere+=(r.a||0); });
-    });
-    // 2) Conto economico del mese
-    const ricavi=[], costi=[];
-    CONTI.forEach(c=>{ if(c.prospetto!=='CE') return; const m=movByCod[c.codice]; if(!m) return;
-      const dare=r2(m.dare), avere=r2(m.avere); if(!dare && !avere) return;
-      let nat=naturaCE(c), imp;
-      if(nat==='R') imp=r2(avere-dare);
-      else if(nat==='C') imp=r2(dare-avere);
-      else { const net=r2(avere-dare); if(net>=0){nat='R'; imp=net;} else {nat='C'; imp=r2(-net);} }
-      (nat==='R'?ricavi:costi).push({cod:c.codice,nome:c.nome,imp});
-    });
-    const totRicavi=r2(ricavi.reduce((s,x)=>s+x.imp,0));
-    const totCosti=r2(costi.reduce((s,x)=>s+x.imp,0));
-    const risultato=r2(totRicavi-totCosti);
-    // 3) Movimenti patrimoniali del mese (conti SP non liquidi)
-    const patr=[];
-    CONTI.forEach(c=>{ if(!c.prospetto.includes('SP')) return; if(LIQ_CODES.includes(c.codice)) return;
-      const m=movByCod[c.codice]; if(!m) return; const varz=r2((m.dare||0)-(m.avere||0)); if(!varz) return;
-      patr.push({cod:c.codice,nome:c.nome,cat:c.categoria,varz});
-    });
-    patr.sort((a,b)=>Math.abs(b.varz)-Math.abs(a.varz));
-    return {liq,liqTot,ricavi,costi,totRicavi,totCosti,risultato,patr};
-  },[scritture,mk]);
+
+    let y=doc.lastAutoTable.finalY+8;
+    y=finTable(ceAoA(),y)+8;
+    if(y>250){ doc.addPage(); y=20; }
+    y=finTable(spAoA(),y)+8;
+    if(y>250){ doc.addPage(); y=20; }
+    finTable(rfAoA(),y);
+
+    doc.save('Chiusura_'+slug()+'.pdf');
+    toast('PDF generato','success');
+  }
 
   if(!mk) return (<div><PageHead title="Chiusura mensile" sub="Fotografia contabile del mese"/><div className="empty-state">Nessun dato disponibile.</div></div>);
 
-  const {liq,liqTot,ricavi,costi,totRicavi,totCosti,risultato,patr}=rep;
+  const {liq,liqTot,ricavi,costi,totRicavi,totCosti,risultato,sp,rf}=rep;
   const deltaLiq=r2(liqTot.closing-liqTot.opening);
 
   return (
     <div>
-      <PageHead title="Chiusura mensile" sub={`Fotografia contabile — ${label(mk)}`}>
+      <PageHead title="Chiusura mensile" sub={`Fotografia contabile — ${periodoLabel}`}>
+        <div className="tipo-switch" style={{gridTemplateColumns:'1fr 1fr',width:210}}>
+          <button className={mode==='mensile'?'active entrata':''} onClick={()=>setMode('mensile')}>Mensile</button>
+          <button className={mode==='progressivo'?'active entrata':''} onClick={()=>setMode('progressivo')}>Progressivo</button>
+        </div>
         <select value={mk} onChange={e=>setMese(e.target.value)} style={{padding:'8px 12px',borderRadius:'var(--radius)',border:'1px solid var(--rule-2)',background:'var(--panel)',color:'var(--ink)',fontWeight:500}}>
-          {[...mesi].reverse().map(k=><option key={k} value={k}>{label(k)}</option>)}
+          {[...mesi].reverse().map(k=><option key={k} value={k}>{meseNome(k)}</option>)}
         </select>
+        <button className="btn ghost" onClick={exportPDF}>↓ PDF</button>
+        <button className="btn accent" onClick={exportExcel}>↓ Excel</button>
       </PageHead>
 
       <div className="kpi-grid">
-        <Kpi label="Entrate liquidità" value={eur(liqTot.entrate)} hint={label(mk)}/>
-        <Kpi label="Uscite liquidità" value={eur(liqTot.uscite)} hint={label(mk)}/>
-        <Kpi label="Δ Liquidità" value={eur(deltaLiq)} neg={deltaLiq<0} hint="rispetto a fine mese prec."/>
-        <Kpi accent label="Risultato economico" value={eur(risultato)} neg={risultato<0} hint={risultato>=0?'utile del mese':'perdita del mese'}/>
+        <Kpi label="Entrate liquidità" value={eur(liqTot.entrate)} hint={periodoLabel}/>
+        <Kpi label="Uscite liquidità" value={eur(liqTot.uscite)} hint={periodoLabel}/>
+        <Kpi label="Δ Liquidità" value={eur(deltaLiq)} neg={deltaLiq<0} hint={mode==='progressivo'?'rispetto a inizio anno':'rispetto a fine mese prec.'}/>
+        <Kpi accent label="Risultato economico" value={eur(risultato)} neg={risultato<0} hint={risultato>=0?'utile del periodo':'perdita del periodo'}/>
       </div>
 
-      <div className="serif" style={{fontSize:18,margin:'26px 0 10px'}}>Liquidità — movimenti del mese</div>
+      <div className="serif" style={{fontSize:18,margin:'26px 0 10px'}}>Liquidità — {mode==='progressivo'?'movimenti da inizio anno':'movimenti del mese'}</div>
       <div className="tbl-wrap">
         <table className="tbl">
           <thead><tr><th>Conto</th><th className="num">Saldo iniziale</th><th className="num">Entrate</th><th className="num">Uscite</th><th className="num">Saldo finale</th></tr></thead>
@@ -2025,46 +2208,73 @@ function PageChiusura({scritture}){
         </table>
       </div>
 
-      <div className="serif" style={{fontSize:18,margin:'26px 0 10px'}}>Conto economico del mese</div>
+      <div className="serif" style={{fontSize:18,margin:'26px 0 10px'}}>Conto economico — {mode==='progressivo'?'progressivo':'del mese'}</div>
       <div className="tbl-wrap">
         <table className="tbl">
           <thead><tr><th>Voce</th><th className="num">Importo</th></tr></thead>
           <tbody>
             <tr><td style={{fontWeight:700,paddingTop:10}}>Ricavi</td><td></td></tr>
-            {ricavi.length===0 && <tr><td colSpan="2" style={{color:'var(--ink-3)',fontStyle:'italic',paddingLeft:22}}>Nessun ricavo nel mese</td></tr>}
+            {ricavi.length===0 && <tr><td colSpan="2" style={{color:'var(--ink-3)',fontStyle:'italic',paddingLeft:22}}>Nessun ricavo nel periodo</td></tr>}
             {ricavi.map(x=><tr key={x.cod}><td style={{paddingLeft:22}}>{x.nome}</td><td className="num pos">{num2(x.imp)}</td></tr>)}
             <tr className="rf-tot strong"><td>Totale ricavi</td><td className="num pos">{num2(totRicavi)}</td></tr>
             <tr><td style={{fontWeight:700,paddingTop:10}}>Costi</td><td></td></tr>
-            {costi.length===0 && <tr><td colSpan="2" style={{color:'var(--ink-3)',fontStyle:'italic',paddingLeft:22}}>Nessun costo nel mese</td></tr>}
+            {costi.length===0 && <tr><td colSpan="2" style={{color:'var(--ink-3)',fontStyle:'italic',paddingLeft:22}}>Nessun costo nel periodo</td></tr>}
             {costi.map(x=><tr key={x.cod}><td style={{paddingLeft:22}}>{x.nome}</td><td className="num neg">{num2(x.imp)}</td></tr>)}
             <tr className="rf-tot strong"><td>Totale costi</td><td className="num neg">{num2(totCosti)}</td></tr>
           </tbody>
           <tfoot><tr className="rf-tot strong">
-            <td>Risultato del mese</td>
+            <td>Risultato del periodo</td>
             <td className={'num '+(risultato<0?'neg':'pos')}>{risultato>=0?'+':'−'}{num2(Math.abs(risultato))}</td>
           </tr></tfoot>
         </table>
       </div>
 
-      <div className="serif" style={{fontSize:18,margin:'26px 0 10px'}}>Movimenti patrimoniali del mese</div>
+      <div className="serif" style={{fontSize:18,margin:'26px 0 10px'}}>Stato patrimoniale — al {meseNome(mk)}</div>
       <div className="tbl-wrap">
         <table className="tbl">
-          <thead><tr><th>Conto</th><th>Categoria</th><th className="num">Variazione</th></tr></thead>
+          <thead><tr><th>Voce</th><th className="num">Importo</th></tr></thead>
           <tbody>
-            {patr.length===0 && <tr><td colSpan="3" style={{color:'var(--ink-3)',fontStyle:'italic'}}>Nessun movimento patrimoniale nel mese</td></tr>}
-            {patr.map(x=>(
-              <tr key={x.cod}>
-                <td>{x.nome}</td>
-                <td style={{fontSize:11,color:'var(--ink-3)'}}>{x.cat}</td>
-                <td className={'num '+(x.varz<0?'neg':'pos')}>{x.varz>=0?'+':'−'}{num2(Math.abs(x.varz))}</td>
-              </tr>
-            ))}
+            <tr><td style={{fontWeight:700}}>ATTIVO</td><td></td></tr>
+            {sp.immMat.length>0 && <tr><td style={{fontWeight:600,paddingLeft:12}}>Immobilizzazioni materiali</td><td className="num">{num2(sp.totImmMat)}</td></tr>}
+            {sp.immMat.map(r=><tr key={'im'+r.cod}><td style={{paddingLeft:26,fontSize:12}}>{r.nome}</td><td className="num" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
+            {sp.immFin.length>0 && <tr><td style={{fontWeight:600,paddingLeft:12}}>Immobilizzazioni finanziarie</td><td className="num">{num2(sp.totImmFin)}</td></tr>}
+            {sp.immFin.map(r=><tr key={'if'+r.cod}><td style={{paddingLeft:26,fontSize:12}}>{r.nome}</td><td className="num" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
+            {sp.fondi.length>0 && <tr><td style={{fontWeight:600,paddingLeft:12}}>Fondi ammortamento (−)</td><td className="num neg">{num2(sp.totFondi)}</td></tr>}
+            {sp.fondi.map(r=><tr key={'fo'+r.cod}><td style={{paddingLeft:26,fontSize:12}}>{r.nome}</td><td className="num neg" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
+            <tr><td style={{fontWeight:600,paddingLeft:12}}>Disponibilità liquide</td><td className="num">{num2(sp.totDisp)}</td></tr>
+            {sp.disp.map(r=><tr key={'dl'+r.cod}><td style={{paddingLeft:26,fontSize:12}}>{r.nome}</td><td className="num" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
+            <tr className="rf-tot strong"><td>Totale attivo</td><td className="num">{num2(sp.attivo)}</td></tr>
+            <tr><td style={{fontWeight:700,paddingTop:10}}>PASSIVO E NETTO</td><td></td></tr>
+            <tr><td style={{fontWeight:600,paddingLeft:12}}>Patrimonio netto</td><td className="num">{num2(sp.pn)}</td></tr>
+            {sp.pnRows.map(r=><tr key={'pn'+r.cod}><td style={{paddingLeft:26,fontSize:12}}>{r.nome}</td><td className="num" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
+            <tr><td style={{paddingLeft:12}}>Risultato d'esercizio <span style={{fontSize:11,color:'var(--ink-3)'}}>(progressivo)</span></td><td className={'num '+(sp.risEserc<0?'neg':'pos')}>{num2(sp.risEserc)}</td></tr>
+            <tr className="rf-tot strong"><td>Totale passivo e netto</td><td className="num">{num2(sp.totPassivoNetto)}</td></tr>
+            {Math.abs(sp.sbilancio)>0.005 && <tr><td style={{color:'var(--danger)',fontSize:12}}>Sbilancio da verificare</td><td className="num neg" style={{fontSize:12}}>{num2(sp.sbilancio)}</td></tr>}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="serif" style={{fontSize:18,margin:'26px 0 10px'}}>Rendiconto finanziario — {mode==='progressivo'?'progressivo':'del mese'}</div>
+      <div className="tbl-wrap">
+        <table className="tbl">
+          <thead><tr><th>Voce</th><th className="num">Importo</th></tr></thead>
+          <tbody>
+            <tr className="rf-tot"><td>Disponibilità iniziali</td><td className="num">{num2(rf.ini)}</td></tr>
+            <tr><td style={{fontWeight:700,paddingTop:8}}>Entrate operative</td><td className="num pos">{num2(rf.totEnt)}</td></tr>
+            {rf.ent.map(r=><tr key={'re'+r.nome}><td style={{paddingLeft:22,fontSize:12}}>{r.nome}</td><td className="num pos" style={{fontSize:12}}>{num2(r.imp)}</td></tr>)}
+            <tr><td style={{fontWeight:700,paddingTop:8}}>Uscite operative</td><td className="num neg">{num2(rf.totUsc)}</td></tr>
+            {rf.usc.map(r=><tr key={'ru'+r.nome}><td style={{paddingLeft:22,fontSize:12}}>{r.nome}</td><td className="num neg" style={{fontSize:12}}>{num2(r.imp)}</td></tr>)}
+            {rf.inv.length>0 && <tr><td style={{fontWeight:700,paddingTop:8}}>Investimenti</td><td className="num neg">{num2(rf.totInv)}</td></tr>}
+            {rf.inv.map(r=><tr key={'ri'+r.nome}><td style={{paddingLeft:22,fontSize:12}}>{r.nome}</td><td className="num neg" style={{fontSize:12}}>{num2(r.imp)}</td></tr>)}
+            <tr className="rf-tot"><td>Flusso operativo / investimenti</td><td className={'num '+(rf.flussoOper<0?'neg':'pos')}>{rf.flussoOper>=0?'+':'−'}{num2(Math.abs(rf.flussoOper))}</td></tr>
+            {Math.abs(rf.altri)>0.005 && <tr><td style={{color:'var(--ink-3)'}}>Giroconti e movimenti non operativi</td><td className={'num '+(rf.altri<0?'neg':'pos')}>{rf.altri>=0?'+':'−'}{num2(Math.abs(rf.altri))}</td></tr>}
+            <tr className="rf-tot strong"><td>Disponibilità finali</td><td className="num">{num2(rf.fin)}</td></tr>
           </tbody>
         </table>
       </div>
 
       <div style={{fontSize:12,color:'var(--ink-3)',marginTop:14,fontStyle:'italic'}}>
-        Report ricalcolato in tempo reale dal libro giornale — nessun dato viene scritto. La variazione patrimoniale è il Dare − Avere del conto nel mese (positiva = aumento di attività / riduzione di passività). La Δ liquidità può differire dal risultato economico per effetto di investimenti, giroconti e movimenti patrimoniali.
+        Report ricalcolato in tempo reale dal libro giornale — nessun dato viene scritto. In modalità <b>mensile</b> i flussi (liquidità, conto economico, rendiconto) coprono solo il mese selezionato; in <b>progressivo</b> vanno da gennaio al mese scelto. Lo <b>stato patrimoniale</b> è sempre una fotografia dei saldi a fine mese e non dipende dalla modalità. Nel rendiconto la riga «giroconti e movimenti non operativi» riconcilia il flusso operativo con la variazione effettiva di cassa.
       </div>
     </div>
   );
@@ -3059,7 +3269,7 @@ function App({authUser, onLogout}){
         <div className="main">
           {page==='dashboard' && <PageDashboard scritture={scritture} saldi={saldi} goto={nav}/>}
           {page==='snapshot' && <PageSnapshot scritture={scritture}/>}
-          {page==='chiusura' && <PageChiusura scritture={scritture}/>}
+          {page==='chiusura' && <PageChiusura scritture={scritture} categorie={categorie} toast={showToast}/>}
           {page==='nuova' && <PageNuova onAdd={addScrittura} toast={showToast} categorie={categorie}/>}
           {page==='import' && <PageImport onAddMany={addScritture} mappa={mappa} setMappa={setMappa} categorie={categorie} setCategorie={setCategorie} toast={showToast}/>}
           {page==='giornale' && <PageLibroGiornale scritture={scritture} onUpdate={updateScrittura} onDelete={deleteScrittura} toast={showToast} categorie={categorie}/>}
