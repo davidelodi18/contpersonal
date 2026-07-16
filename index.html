@@ -3106,6 +3106,152 @@ function PageCategorie({categorie, setCategorie, scritture, toast}){
   );
 }
 
+/* ============================================================
+   PAGINA: VARIAZIONI CASSA
+   Righe libere (descrizione, importo con segno, conto contabile,
+   categoria RF) -> proposta di scrittura -> conferma manuale.
+   ============================================================ */
+function PageVariazioni({onAddMany, saldi, categorie, toast}){
+  const [liq,setLiq]=useState(3);                 // conto liquidità: default CASSA
+  const [dataDef,setDataDef]=useState(todayISO());
+  const newRow=()=>({k:uid(), data:dataDef, descr:'', importo:'', conto:'', cat:''});
+  const [rows,setRows]=useState(()=>[{k:uid(),data:todayISO(),descr:'',importo:'',conto:'',cat:''}]);
+  const [proposta,setProposta]=useState(null);    // null finché non si preme "Proponi"
+
+  const invalida=()=>setProposta(null);
+  const setRow=(i,k,v)=>{ invalida(); setRows(rs=>rs.map((r,j)=>j===i?{...r,[k]:v}:r)); };
+  const addRow=()=>{ invalida(); setRows(rs=>[...rs,newRow()]); };
+  const delRow=i=>{ invalida(); setRows(rs=>rs.length>1?rs.filter((_,j)=>j!==i):[newRow()]); };
+  const resetAll=()=>{ setProposta(null); setRows([newRow()]); };
+
+  const impOf=r=>{ const n=parseFloat(String(r.importo).replace(',','.')); return isNaN(n)?0:n; };
+  const isValida=r=>!!r.data && !!r.conto && Math.abs(impOf(r))>0.004;
+  const valide=rows.filter(isValida);
+  const incomplete=rows.filter(r=>(r.descr||r.importo!==''||r.conto) && !isValida(r)).length;
+
+  const totale=r2(valide.reduce((s,r)=>s+impOf(r),0));
+  const saldoAtt=(saldi[liq]&&saldi[liq].saldo)||0;
+
+  function proponi(){
+    if(!valide.length){ toast('Nessuna riga completa (servono importo ≠ 0 e conto)','error'); return; }
+    const scrit=valide.map(r=>{
+      const v=r2(impOf(r)); const imp=Math.abs(v); const pos=v>0; const cc=parseInt(r.conto);
+      return {
+        id:uid(), data:r.data,
+        descr:(r.descr||'').trim() || (pos?'Variazione cassa in aumento':'Variazione cassa in diminuzione'),
+        righe: pos ? [{c:liq,d:imp,a:0},{c:cc,d:0,a:imp}]
+                   : [{c:cc,d:imp,a:0},{c:liq,d:0,a:imp}],
+        origine:'manuale', tipo:'liquidita', cat:(r.cat||'').trim(),
+        _pos:pos, _imp:imp, _cc:cc
+      };
+    });
+    setProposta(scrit);
+  }
+  function conferma(){
+    if(!proposta||!proposta.length) return;
+    const puliti=proposta.map(s=>{ const {_pos,_imp,_cc,...rest}=s; return rest; });
+    onAddMany(puliti);
+    toast(`${puliti.length} ${puliti.length===1?'scrittura registrata':'scritture registrate'}`,'success');
+    resetAll();
+  }
+
+  return (
+    <div>
+      <PageHead title="Variazioni cassa" sub="Inserisci le variazioni, poi proponi la scrittura e confermala">
+        <button className="btn ghost" onClick={resetAll}>Svuota</button>
+        <button className="btn accent" onClick={proponi} disabled={!valide.length}>⇢ Proponi scritture</button>
+      </PageHead>
+
+      <div className="card" style={{marginBottom:14,display:'flex',gap:18,flexWrap:'wrap',alignItems:'flex-end'}}>
+        <div className="form-row" style={{minWidth:220}}>
+          <label>Conto liquidità (contropartita)</label>
+          <ContoSelect value={liq} onChange={v=>{invalida();setLiq(v);}} filter={c=>c.categoria==='DISP. LIQUIDE'}/>
+        </div>
+        <div className="form-row" style={{minWidth:170}}>
+          <label>Data predefinita</label>
+          <input type="date" value={dataDef} onChange={e=>setDataDef(e.target.value)}/>
+        </div>
+        <div style={{marginLeft:'auto',fontSize:12.5,color:'var(--ink-2)',textAlign:'right'}}>
+          Saldo {contoByCode[liq]?.nome}: <b>{eur(saldoAtt)}</b><br/>
+          Variazione proposta: <b style={{color:totale>=0?'var(--success)':'var(--danger)'}}>{totale>=0?'+':''}{num2(totale)}</b> → saldo <b>{eur(r2(saldoAtt+totale))}</b>
+        </div>
+      </div>
+
+      <div className="tbl-wrap">
+        <table className="tbl">
+          <thead><tr>
+            <th style={{width:130}}>Data</th>
+            <th>Descrizione operazione</th>
+            <th className="num" style={{width:120}}>Importo (±)</th>
+            <th style={{width:230}}>Conto contabile</th>
+            <th style={{width:200}}>Categoria rendiconto</th>
+            <th style={{width:40}}></th>
+          </tr></thead>
+          <tbody>
+            {rows.map((r,i)=>{
+              const v=impOf(r); const pos=v>0;
+              return (
+                <tr key={r.k} style={isValida(r)?{}:{background:'#fbf6e8'}}>
+                  <td><input type="date" value={r.data} onChange={e=>setRow(i,'data',e.target.value)}/></td>
+                  <td><input type="text" value={r.descr} onChange={e=>setRow(i,'descr',e.target.value)} placeholder="Es. rettifica spese cassa" style={{minWidth:180}}/></td>
+                  <td className="num"><input type="number" step="0.01" value={r.importo} onChange={e=>setRow(i,'importo',e.target.value)} placeholder="0,00"
+                        style={{textAlign:'right',color:v===0?undefined:(pos?'var(--success)':'var(--danger)'),fontWeight:v===0?400:600}}/></td>
+                  <td><ContoSelect value={r.conto} onChange={val=>setRow(i,'conto',val)} filter={c=>c.categoria==='COSTI'||c.categoria==='RICAVI'||c.categoria==='RICAVI/COSTI'}/></td>
+                  <td>
+                    <select value={r.cat} onChange={e=>setRow(i,'cat',e.target.value)}>
+                      <option value="">— nessuna —</option>
+                      {(categorie||[]).filter(c=>v>=0?c.sezione==='entrata':(c.sezione==='uscita'||c.sezione==='investimento')).map(c=><option key={c.nome} value={c.nome}>{c.nome}</option>)}
+                    </select>
+                  </td>
+                  <td><button className="btn ghost sm" onClick={()=>delRow(i)}>✕</button></td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot><tr>
+            <td colSpan={2} style={{fontWeight:600}}>Totale variazione</td>
+            <td className="num" style={{fontWeight:600,color:totale>=0?'var(--success)':'var(--danger)'}}>{totale>=0?'+':''}{num2(totale)}</td>
+            <td colSpan={3}></td>
+          </tr></tfoot>
+        </table>
+      </div>
+      <div style={{display:'flex',gap:8,marginTop:10,alignItems:'center'}}>
+        <button className="btn ghost sm" onClick={addRow}>+ Aggiungi riga</button>
+        <span style={{fontSize:12,color:'var(--ink-3)',fontStyle:'italic'}}>
+          Importo <b>positivo</b> = la cassa aumenta (Dare {contoByCode[liq]?.nome} · Avere conto) · <b>negativo</b> = la cassa diminuisce (Dare conto · Avere {contoByCode[liq]?.nome}).
+          {incomplete>0 && <> · {incomplete} riga/e da completare.</>}
+        </span>
+      </div>
+
+      {proposta && <div className="card" style={{marginTop:18,borderColor:'var(--accent)'}}>
+        <div className="card-title">Scritture proposte · {proposta.length}</div>
+        <p style={{color:'var(--ink-2)',fontSize:12.5,marginTop:0}}>Niente è ancora registrato. Controlla e conferma.</p>
+        <div className="tbl-wrap">
+          <table className="tbl">
+            <thead><tr><th>Data</th><th>Descrizione</th><th>Dare</th><th>Avere</th><th className="num">Importo</th><th>Cat. rendiconto</th></tr></thead>
+            <tbody>
+              {proposta.map(s=>(
+                <tr key={s.id}>
+                  <td>{fmtDate(s.data)}</td>
+                  <td>{s.descr}</td>
+                  <td>{contoByCode[s.righe[0].c]?.nome}</td>
+                  <td>{contoByCode[s.righe[1].c]?.nome}</td>
+                  <td className="num">{num2(s._imp)}</td>
+                  <td style={{fontSize:12}}>{s.cat||<span style={{color:'var(--ink-3)'}}>—</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:12}}>
+          <button className="btn ghost" onClick={()=>setProposta(null)}>Annulla proposta</button>
+          <button className="btn accent" onClick={conferma}>✓ Conferma e registra</button>
+        </div>
+      </div>}
+    </div>
+  );
+}
+
 const NAV = [
   {sec:'Panoramica',items:[
     {id:'dashboard',ico:'◫',label:'Dashboard'},
@@ -3114,6 +3260,7 @@ const NAV = [
   ]},
   {sec:'Registrazioni',items:[
     {id:'nuova',ico:'+',label:'Nuova scrittura'},
+    {id:'variazioni',ico:'±',label:'Variazioni cassa'},
     {id:'import',ico:'↑',label:'Import movimenti'},
     {id:'giornale',ico:'≣',label:'Libro Giornale'},
     {id:'movimenti',ico:'≡',label:'Movimenti'},
@@ -3271,6 +3418,7 @@ function App({authUser, onLogout}){
           {page==='snapshot' && <PageSnapshot scritture={scritture}/>}
           {page==='chiusura' && <PageChiusura scritture={scritture} categorie={categorie} toast={showToast}/>}
           {page==='nuova' && <PageNuova onAdd={addScrittura} toast={showToast} categorie={categorie}/>}
+          {page==='variazioni' && <PageVariazioni onAddMany={addScritture} saldi={saldi} categorie={categorie} toast={showToast}/>}
           {page==='import' && <PageImport onAddMany={addScritture} mappa={mappa} setMappa={setMappa} categorie={categorie} setCategorie={setCategorie} toast={showToast}/>}
           {page==='giornale' && <PageLibroGiornale scritture={scritture} onUpdate={updateScrittura} onDelete={deleteScrittura} toast={showToast} categorie={categorie}/>}
           {page==='movimenti' && <PageMovimenti scritture={scritture} saldi={saldi}/>}
