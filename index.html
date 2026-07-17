@@ -505,6 +505,12 @@
     font-size: 18px;
   }
   .modal-body { padding: 22px 24px; }
+  .drill-link {
+    cursor: pointer;
+    border-bottom: 1px dotted var(--rule-2);
+    transition: color .12s ease;
+  }
+  .drill-link:hover { color: var(--accent-ink); border-bottom-color: var(--accent); }
   .modal-foot {
     padding: 14px 24px;
     border-top: 1px solid var(--rule);
@@ -1009,6 +1015,82 @@ function DrillCassa({cod, scritture, onClose}){
                   </tr>
                 ))}
               </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+/* Drill-down generico su un conto, filtrato per periodo (mensile/progressivo).
+   Usato dalla Chiusura mensile: mostra saldo iniziale, movimenti e saldo finale. */
+function DrillConto({cod, scritture, mk, mode, onClose}){
+  const c=contoByCode[cod]||{nome:'Conto '+cod,categoria:''};
+  const isProg = mode==='progressivo';
+  const yearStart = (mk||'').slice(0,4)+'-01';
+  const inPeriod = k => isProg ? (k>=yearStart && k<=mk) : (k===mk);
+  const before   = k => isProg ? (k<yearStart) : (k<mk);
+
+  let opening=0; const lines=[];
+  (scritture||[]).forEach(s=>{ const k=rfMonthKey(s.data); if(!k) return;
+    s.righe.forEach(r=>{ if(r.c!==cod) return;
+      if(before(k)) opening += (r.d||0)-(r.a||0);
+      else if(inPeriod(k)) lines.push({id:s.id,data:s.data,descr:s.descr,d:r.d||0,a:r.a||0,tipo:s.tipo,cat:catOf(s),origine:s.origine});
+    });
+  });
+  opening=r2(opening);
+  lines.sort((a,b)=>(a.data||'').localeCompare(b.data||''));
+  let run=opening; lines.forEach(l=>{ run=r2(run+l.d-l.a); l.saldo=run; });
+  const totD=r2(lines.reduce((s,l)=>s+l.d,0)), totA=r2(lines.reduce((s,l)=>s+l.a,0));
+  const periodo = isProg ? ('Gen–'+rfMonthLabel(mk)+' '+mk.slice(0,4)) : (rfMonthLabel(mk)+' '+mk.slice(0,4));
+  const view=[...lines].reverse();
+
+  return (
+    <div className="modal-bg" onClick={e=>{if(e.target.className==='modal-bg')onClose();}}>
+      <div className="modal" style={{maxWidth:820}}>
+        <div className="modal-head">
+          <h3>{c.codice?c.codice+' · ':''}{c.nome}</h3>
+          <button className="btn ghost sm" onClick={onClose}>✕</button>
+        </div>
+        <div className="modal-body" style={{paddingTop:0}}>
+          <div style={{display:'flex',gap:10,margin:'4px 0 14px',flexWrap:'wrap',alignItems:'center'}}>
+            <span className="pill">{c.categoria}</span>
+            <span className="pill">{isProg?'progressivo':'mensile'} · {periodo}</span>
+            <span className="pill">{lines.length} {lines.length===1?'movimento':'movimenti'}</span>
+          </div>
+          <div style={{display:'flex',gap:18,marginBottom:14,fontSize:13,color:'var(--ink-2)',flexWrap:'wrap'}}>
+            <span>Saldo iniziale <b>{num2(opening)}</b></span>
+            <span>Dare <b className="pos">{num2(totD)}</b></span>
+            <span>Avere <b className="neg">{num2(totA)}</b></span>
+            <span style={{marginLeft:'auto'}}>Saldo finale <b>{eur(run)}</b></span>
+          </div>
+          <div className="tbl-wrap">
+            <table className="tbl">
+              <thead><tr>
+                <th style={{width:84}}>Data</th><th>Descrizione</th><th>Cat. rendiconto</th>
+                <th className="num">Dare</th><th className="num">Avere</th><th className="num">Saldo</th>
+              </tr></thead>
+              <tbody>
+                {view.length===0 && <tr><td colSpan="6" className="empty-state">Nessun movimento nel periodo</td></tr>}
+                {view.map((l,i)=>(
+                  <tr key={l.id+'_'+i}>
+                    <td style={{whiteSpace:'nowrap'}}>{fmtDate(l.data)}</td>
+                    <td>{l.descr}{l.tipo==='giroconto'&&<span className="pill giroconto" style={{marginLeft:6}}>giroconto</span>}</td>
+                    <td style={{fontSize:12,color:'var(--ink-3)'}}>{l.cat||'—'}</td>
+                    <td className="num pos">{l.d?num2(l.d):''}</td>
+                    <td className="num neg">{l.a?num2(l.a):''}</td>
+                    <td className={'num '+(l.saldo<0?'neg':'')}>{num2(l.saldo)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot><tr className="rf-tot strong">
+                <td colSpan="3">Totale periodo</td>
+                <td className="num pos">{num2(totD)}</td>
+                <td className="num neg">{num2(totA)}</td>
+                <td className="num">{num2(run)}</td>
+              </tr></tfoot>
             </table>
           </div>
         </div>
@@ -2033,6 +2115,7 @@ function PageChiusura({scritture, categorie, toast}){
   },[scritture]);
   const [mese,setMese]=useState('');
   const [mode,setMode]=useState('mensile');
+  const [drill,setDrill]=useState(null);   // conto aperto nel pop-up
   const mk = mese || mesi[mesi.length-1] || '';
   const meseNome = k => k ? rfMonthLabel(k)+' '+k.slice(0,4) : '';
   const periodoLabel = mode==='progressivo'
@@ -2190,7 +2273,7 @@ function PageChiusura({scritture, categorie, toast}){
           <tbody>
             {liq.map(x=>(
               <tr key={x.cod}>
-                <td>{x.nome}</td>
+                <td><span className="drill-link" onClick={()=>setDrill(x.cod)} title="Vedi i movimenti del periodo">{x.nome}</span></td>
                 <td className="num">{num2(x.opening)}</td>
                 <td className="num pos">{x.entrate?'+'+num2(x.entrate):num2(0)}</td>
                 <td className="num neg">{x.uscite?'−'+num2(x.uscite):num2(0)}</td>
@@ -2215,11 +2298,11 @@ function PageChiusura({scritture, categorie, toast}){
           <tbody>
             <tr><td style={{fontWeight:700,paddingTop:10}}>Ricavi</td><td></td></tr>
             {ricavi.length===0 && <tr><td colSpan="2" style={{color:'var(--ink-3)',fontStyle:'italic',paddingLeft:22}}>Nessun ricavo nel periodo</td></tr>}
-            {ricavi.map(x=><tr key={x.cod}><td style={{paddingLeft:22}}>{x.nome}</td><td className="num pos">{num2(x.imp)}</td></tr>)}
+            {ricavi.map(x=><tr key={x.cod}><td style={{paddingLeft:22}}><span className="drill-link" onClick={()=>setDrill(x.cod)} title="Vedi i movimenti del periodo">{x.nome}</span></td><td className="num pos">{num2(x.imp)}</td></tr>)}
             <tr className="rf-tot strong"><td>Totale ricavi</td><td className="num pos">{num2(totRicavi)}</td></tr>
             <tr><td style={{fontWeight:700,paddingTop:10}}>Costi</td><td></td></tr>
             {costi.length===0 && <tr><td colSpan="2" style={{color:'var(--ink-3)',fontStyle:'italic',paddingLeft:22}}>Nessun costo nel periodo</td></tr>}
-            {costi.map(x=><tr key={x.cod}><td style={{paddingLeft:22}}>{x.nome}</td><td className="num neg">{num2(x.imp)}</td></tr>)}
+            {costi.map(x=><tr key={x.cod}><td style={{paddingLeft:22}}><span className="drill-link" onClick={()=>setDrill(x.cod)} title="Vedi i movimenti del periodo">{x.nome}</span></td><td className="num neg">{num2(x.imp)}</td></tr>)}
             <tr className="rf-tot strong"><td>Totale costi</td><td className="num neg">{num2(totCosti)}</td></tr>
           </tbody>
           <tfoot><tr className="rf-tot strong">
@@ -2236,17 +2319,17 @@ function PageChiusura({scritture, categorie, toast}){
           <tbody>
             <tr><td style={{fontWeight:700}}>ATTIVO</td><td></td></tr>
             {sp.immMat.length>0 && <tr><td style={{fontWeight:600,paddingLeft:12}}>Immobilizzazioni materiali</td><td className="num">{num2(sp.totImmMat)}</td></tr>}
-            {sp.immMat.map(r=><tr key={'im'+r.cod}><td style={{paddingLeft:26,fontSize:12}}>{r.nome}</td><td className="num" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
+            {sp.immMat.map(r=><tr key={'im'+r.cod}><td style={{paddingLeft:26,fontSize:12}}><span className="drill-link" onClick={()=>setDrill(r.cod)} title="Vedi i movimenti del periodo">{r.nome}</span></td><td className="num" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
             {sp.immFin.length>0 && <tr><td style={{fontWeight:600,paddingLeft:12}}>Immobilizzazioni finanziarie</td><td className="num">{num2(sp.totImmFin)}</td></tr>}
-            {sp.immFin.map(r=><tr key={'if'+r.cod}><td style={{paddingLeft:26,fontSize:12}}>{r.nome}</td><td className="num" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
+            {sp.immFin.map(r=><tr key={'if'+r.cod}><td style={{paddingLeft:26,fontSize:12}}><span className="drill-link" onClick={()=>setDrill(r.cod)} title="Vedi i movimenti del periodo">{r.nome}</span></td><td className="num" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
             {sp.fondi.length>0 && <tr><td style={{fontWeight:600,paddingLeft:12}}>Fondi ammortamento (−)</td><td className="num neg">{num2(sp.totFondi)}</td></tr>}
-            {sp.fondi.map(r=><tr key={'fo'+r.cod}><td style={{paddingLeft:26,fontSize:12}}>{r.nome}</td><td className="num neg" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
+            {sp.fondi.map(r=><tr key={'fo'+r.cod}><td style={{paddingLeft:26,fontSize:12}}><span className="drill-link" onClick={()=>setDrill(r.cod)} title="Vedi i movimenti del periodo">{r.nome}</span></td><td className="num neg" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
             <tr><td style={{fontWeight:600,paddingLeft:12}}>Disponibilità liquide</td><td className="num">{num2(sp.totDisp)}</td></tr>
-            {sp.disp.map(r=><tr key={'dl'+r.cod}><td style={{paddingLeft:26,fontSize:12}}>{r.nome}</td><td className="num" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
+            {sp.disp.map(r=><tr key={'dl'+r.cod}><td style={{paddingLeft:26,fontSize:12}}><span className="drill-link" onClick={()=>setDrill(r.cod)} title="Vedi i movimenti del periodo">{r.nome}</span></td><td className="num" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
             <tr className="rf-tot strong"><td>Totale attivo</td><td className="num">{num2(sp.attivo)}</td></tr>
             <tr><td style={{fontWeight:700,paddingTop:10}}>PASSIVO E NETTO</td><td></td></tr>
             <tr><td style={{fontWeight:600,paddingLeft:12}}>Patrimonio netto</td><td className="num">{num2(sp.pn)}</td></tr>
-            {sp.pnRows.map(r=><tr key={'pn'+r.cod}><td style={{paddingLeft:26,fontSize:12}}>{r.nome}</td><td className="num" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
+            {sp.pnRows.map(r=><tr key={'pn'+r.cod}><td style={{paddingLeft:26,fontSize:12}}><span className="drill-link" onClick={()=>setDrill(r.cod)} title="Vedi i movimenti del periodo">{r.nome}</span></td><td className="num" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
             <tr><td style={{paddingLeft:12}}>Risultato d'esercizio <span style={{fontSize:11,color:'var(--ink-3)'}}>(progressivo)</span></td><td className={'num '+(sp.risEserc<0?'neg':'pos')}>{num2(sp.risEserc)}</td></tr>
             <tr className="rf-tot strong"><td>Totale passivo e netto</td><td className="num">{num2(sp.totPassivoNetto)}</td></tr>
             {Math.abs(sp.sbilancio)>0.005 && <tr><td style={{color:'var(--danger)',fontSize:12}}>Sbilancio da verificare</td><td className="num neg" style={{fontSize:12}}>{num2(sp.sbilancio)}</td></tr>}
@@ -2276,6 +2359,8 @@ function PageChiusura({scritture, categorie, toast}){
       <div style={{fontSize:12,color:'var(--ink-3)',marginTop:14,fontStyle:'italic'}}>
         Report ricalcolato in tempo reale dal libro giornale — nessun dato viene scritto. In modalità <b>mensile</b> i flussi (liquidità, conto economico, rendiconto) coprono solo il mese selezionato; in <b>progressivo</b> vanno da gennaio al mese scelto. Lo <b>stato patrimoniale</b> è sempre una fotografia dei saldi a fine mese e non dipende dalla modalità. Nel rendiconto la riga «giroconti e movimenti non operativi» riconcilia il flusso operativo con la variazione effettiva di cassa.
       </div>
+
+      {drill!=null && <DrillConto cod={drill} scritture={scritture} mk={mk} mode={mode} onClose={()=>setDrill(null)}/>}
     </div>
   );
 }
