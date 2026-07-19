@@ -505,12 +505,6 @@
     font-size: 18px;
   }
   .modal-body { padding: 22px 24px; }
-  .drill-link {
-    cursor: pointer;
-    border-bottom: 1px dotted var(--rule-2);
-    transition: color .12s ease;
-  }
-  .drill-link:hover { color: var(--accent-ink); border-bottom-color: var(--accent); }
   .modal-foot {
     padding: 14px 24px;
     border-top: 1px solid var(--rule);
@@ -862,14 +856,35 @@ const { useState, useMemo, useEffect, useRef } = React;
    SEED  ->  iniettato come window.__SEED__ a build time
    ============================================================ */
 const SEED = window.__SEED__;
-const CONTI = SEED.conti;                         // piano dei conti
 const MOVIMENTI = SEED.movimenti;                 // entrate/uscite di cassa
 const CESPITI_SEED = SEED.cespiti;
 const SALDI_INIZIALI = SEED.saldiIniziali;        // per conto liquidità (cod -> importo)
 
-const LIQ_CODES = CONTI.filter(c => c.categoria === 'DISP. LIQUIDE').map(c => c.codice);
-const contoByCode = {}; CONTI.forEach(c => { contoByCode[c.codice] = c; });
-const codeByName = {}; CONTI.forEach(c => { codeByName[c.nome.toUpperCase().replace(/\./g,' ').replace(/\s+/g,' ').trim()] = c.codice; });
+/* ---- piano dei conti: modificabile e persistito ---- */
+const LS_CONTI = 'contabilita_personale_conti_v1';
+function loadConti(){
+  try{ const raw=localStorage.getItem(LS_CONTI); if(raw){ const arr=JSON.parse(raw); if(Array.isArray(arr)&&arr.length) return arr; } }catch(e){}
+  return SEED.conti.map(c=>({...c}));
+}
+function saveContiLS(arr){ try{ localStorage.setItem(LS_CONTI, JSON.stringify(arr)); }catch(e){} }
+let CONTI = loadConti();                           // piano dei conti (live)
+
+let LIQ_CODES, contoByCode, codeByName;
+function rebuildContiBase(){
+  LIQ_CODES = CONTI.filter(c => c.categoria === 'DISP. LIQUIDE').map(c => c.codice);
+  contoByCode = {}; CONTI.forEach(c => { contoByCode[c.codice] = c; });
+  codeByName = {}; CONTI.forEach(c => { codeByName[c.nome.toUpperCase().replace(/\./g,' ').replace(/\s+/g,' ').trim()] = c.codice; });
+}
+rebuildContiBase();
+/* ricostruzione completa dei derivati dopo una modifica al piano dei conti.
+   rebuildAmmMaps / rebuildLiqAlias sono dichiarate più avanti (hoisting): qui
+   servono solo a runtime, quando quelle variabili sono già inizializzate. */
+function rebuildContiDerivati(){
+  rebuildContiBase();
+  try{ rebuildAmmMaps(); }catch(e){}
+  try{ rebuildLiqAlias(); }catch(e){}
+}
+function applyConti(list){ CONTI = list; rebuildContiDerivati(); }
 
 /* ---- categorie rendiconto ---- */
 function nk(s){ return String(s||'').toUpperCase().replace(/\./g,' ').replace(/-/g,' ').replace(/\s+/g,' ').trim(); }
@@ -1015,82 +1030,6 @@ function DrillCassa({cod, scritture, onClose}){
                   </tr>
                 ))}
               </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-
-/* Drill-down generico su un conto, filtrato per periodo (mensile/progressivo).
-   Usato dalla Chiusura mensile: mostra saldo iniziale, movimenti e saldo finale. */
-function DrillConto({cod, scritture, mk, mode, onClose}){
-  const c=contoByCode[cod]||{nome:'Conto '+cod,categoria:''};
-  const isProg = mode==='progressivo';
-  const yearStart = (mk||'').slice(0,4)+'-01';
-  const inPeriod = k => isProg ? (k>=yearStart && k<=mk) : (k===mk);
-  const before   = k => isProg ? (k<yearStart) : (k<mk);
-
-  let opening=0; const lines=[];
-  (scritture||[]).forEach(s=>{ const k=rfMonthKey(s.data); if(!k) return;
-    s.righe.forEach(r=>{ if(r.c!==cod) return;
-      if(before(k)) opening += (r.d||0)-(r.a||0);
-      else if(inPeriod(k)) lines.push({id:s.id,data:s.data,descr:s.descr,d:r.d||0,a:r.a||0,tipo:s.tipo,cat:catOf(s),origine:s.origine});
-    });
-  });
-  opening=r2(opening);
-  lines.sort((a,b)=>(a.data||'').localeCompare(b.data||''));
-  let run=opening; lines.forEach(l=>{ run=r2(run+l.d-l.a); l.saldo=run; });
-  const totD=r2(lines.reduce((s,l)=>s+l.d,0)), totA=r2(lines.reduce((s,l)=>s+l.a,0));
-  const periodo = isProg ? ('Gen–'+rfMonthLabel(mk)+' '+mk.slice(0,4)) : (rfMonthLabel(mk)+' '+mk.slice(0,4));
-  const view=[...lines].reverse();
-
-  return (
-    <div className="modal-bg" onClick={e=>{if(e.target.className==='modal-bg')onClose();}}>
-      <div className="modal" style={{maxWidth:820}}>
-        <div className="modal-head">
-          <h3>{c.codice?c.codice+' · ':''}{c.nome}</h3>
-          <button className="btn ghost sm" onClick={onClose}>✕</button>
-        </div>
-        <div className="modal-body" style={{paddingTop:0}}>
-          <div style={{display:'flex',gap:10,margin:'4px 0 14px',flexWrap:'wrap',alignItems:'center'}}>
-            <span className="pill">{c.categoria}</span>
-            <span className="pill">{isProg?'progressivo':'mensile'} · {periodo}</span>
-            <span className="pill">{lines.length} {lines.length===1?'movimento':'movimenti'}</span>
-          </div>
-          <div style={{display:'flex',gap:18,marginBottom:14,fontSize:13,color:'var(--ink-2)',flexWrap:'wrap'}}>
-            <span>Saldo iniziale <b>{num2(opening)}</b></span>
-            <span>Dare <b className="pos">{num2(totD)}</b></span>
-            <span>Avere <b className="neg">{num2(totA)}</b></span>
-            <span style={{marginLeft:'auto'}}>Saldo finale <b>{eur(run)}</b></span>
-          </div>
-          <div className="tbl-wrap">
-            <table className="tbl">
-              <thead><tr>
-                <th style={{width:84}}>Data</th><th>Descrizione</th><th>Cat. rendiconto</th>
-                <th className="num">Dare</th><th className="num">Avere</th><th className="num">Saldo</th>
-              </tr></thead>
-              <tbody>
-                {view.length===0 && <tr><td colSpan="6" className="empty-state">Nessun movimento nel periodo</td></tr>}
-                {view.map((l,i)=>(
-                  <tr key={l.id+'_'+i}>
-                    <td style={{whiteSpace:'nowrap'}}>{fmtDate(l.data)}</td>
-                    <td>{l.descr}{l.tipo==='giroconto'&&<span className="pill giroconto" style={{marginLeft:6}}>giroconto</span>}</td>
-                    <td style={{fontSize:12,color:'var(--ink-3)'}}>{l.cat||'—'}</td>
-                    <td className="num pos">{l.d?num2(l.d):''}</td>
-                    <td className="num neg">{l.a?num2(l.a):''}</td>
-                    <td className={'num '+(l.saldo<0?'neg':'')}>{num2(l.saldo)}</td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot><tr className="rf-tot strong">
-                <td colSpan="3">Totale periodo</td>
-                <td className="num pos">{num2(totD)}</td>
-                <td className="num neg">{num2(totA)}</td>
-                <td className="num">{num2(run)}</td>
-              </tr></tfoot>
             </table>
           </div>
         </div>
@@ -2115,7 +2054,6 @@ function PageChiusura({scritture, categorie, toast}){
   },[scritture]);
   const [mese,setMese]=useState('');
   const [mode,setMode]=useState('mensile');
-  const [drill,setDrill]=useState(null);   // conto aperto nel pop-up
   const mk = mese || mesi[mesi.length-1] || '';
   const meseNome = k => k ? rfMonthLabel(k)+' '+k.slice(0,4) : '';
   const periodoLabel = mode==='progressivo'
@@ -2273,7 +2211,7 @@ function PageChiusura({scritture, categorie, toast}){
           <tbody>
             {liq.map(x=>(
               <tr key={x.cod}>
-                <td><span className="drill-link" onClick={()=>setDrill(x.cod)} title="Vedi i movimenti del periodo">{x.nome}</span></td>
+                <td>{x.nome}</td>
                 <td className="num">{num2(x.opening)}</td>
                 <td className="num pos">{x.entrate?'+'+num2(x.entrate):num2(0)}</td>
                 <td className="num neg">{x.uscite?'−'+num2(x.uscite):num2(0)}</td>
@@ -2298,11 +2236,11 @@ function PageChiusura({scritture, categorie, toast}){
           <tbody>
             <tr><td style={{fontWeight:700,paddingTop:10}}>Ricavi</td><td></td></tr>
             {ricavi.length===0 && <tr><td colSpan="2" style={{color:'var(--ink-3)',fontStyle:'italic',paddingLeft:22}}>Nessun ricavo nel periodo</td></tr>}
-            {ricavi.map(x=><tr key={x.cod}><td style={{paddingLeft:22}}><span className="drill-link" onClick={()=>setDrill(x.cod)} title="Vedi i movimenti del periodo">{x.nome}</span></td><td className="num pos">{num2(x.imp)}</td></tr>)}
+            {ricavi.map(x=><tr key={x.cod}><td style={{paddingLeft:22}}>{x.nome}</td><td className="num pos">{num2(x.imp)}</td></tr>)}
             <tr className="rf-tot strong"><td>Totale ricavi</td><td className="num pos">{num2(totRicavi)}</td></tr>
             <tr><td style={{fontWeight:700,paddingTop:10}}>Costi</td><td></td></tr>
             {costi.length===0 && <tr><td colSpan="2" style={{color:'var(--ink-3)',fontStyle:'italic',paddingLeft:22}}>Nessun costo nel periodo</td></tr>}
-            {costi.map(x=><tr key={x.cod}><td style={{paddingLeft:22}}><span className="drill-link" onClick={()=>setDrill(x.cod)} title="Vedi i movimenti del periodo">{x.nome}</span></td><td className="num neg">{num2(x.imp)}</td></tr>)}
+            {costi.map(x=><tr key={x.cod}><td style={{paddingLeft:22}}>{x.nome}</td><td className="num neg">{num2(x.imp)}</td></tr>)}
             <tr className="rf-tot strong"><td>Totale costi</td><td className="num neg">{num2(totCosti)}</td></tr>
           </tbody>
           <tfoot><tr className="rf-tot strong">
@@ -2319,17 +2257,17 @@ function PageChiusura({scritture, categorie, toast}){
           <tbody>
             <tr><td style={{fontWeight:700}}>ATTIVO</td><td></td></tr>
             {sp.immMat.length>0 && <tr><td style={{fontWeight:600,paddingLeft:12}}>Immobilizzazioni materiali</td><td className="num">{num2(sp.totImmMat)}</td></tr>}
-            {sp.immMat.map(r=><tr key={'im'+r.cod}><td style={{paddingLeft:26,fontSize:12}}><span className="drill-link" onClick={()=>setDrill(r.cod)} title="Vedi i movimenti del periodo">{r.nome}</span></td><td className="num" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
+            {sp.immMat.map(r=><tr key={'im'+r.cod}><td style={{paddingLeft:26,fontSize:12}}>{r.nome}</td><td className="num" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
             {sp.immFin.length>0 && <tr><td style={{fontWeight:600,paddingLeft:12}}>Immobilizzazioni finanziarie</td><td className="num">{num2(sp.totImmFin)}</td></tr>}
-            {sp.immFin.map(r=><tr key={'if'+r.cod}><td style={{paddingLeft:26,fontSize:12}}><span className="drill-link" onClick={()=>setDrill(r.cod)} title="Vedi i movimenti del periodo">{r.nome}</span></td><td className="num" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
+            {sp.immFin.map(r=><tr key={'if'+r.cod}><td style={{paddingLeft:26,fontSize:12}}>{r.nome}</td><td className="num" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
             {sp.fondi.length>0 && <tr><td style={{fontWeight:600,paddingLeft:12}}>Fondi ammortamento (−)</td><td className="num neg">{num2(sp.totFondi)}</td></tr>}
-            {sp.fondi.map(r=><tr key={'fo'+r.cod}><td style={{paddingLeft:26,fontSize:12}}><span className="drill-link" onClick={()=>setDrill(r.cod)} title="Vedi i movimenti del periodo">{r.nome}</span></td><td className="num neg" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
+            {sp.fondi.map(r=><tr key={'fo'+r.cod}><td style={{paddingLeft:26,fontSize:12}}>{r.nome}</td><td className="num neg" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
             <tr><td style={{fontWeight:600,paddingLeft:12}}>Disponibilità liquide</td><td className="num">{num2(sp.totDisp)}</td></tr>
-            {sp.disp.map(r=><tr key={'dl'+r.cod}><td style={{paddingLeft:26,fontSize:12}}><span className="drill-link" onClick={()=>setDrill(r.cod)} title="Vedi i movimenti del periodo">{r.nome}</span></td><td className="num" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
+            {sp.disp.map(r=><tr key={'dl'+r.cod}><td style={{paddingLeft:26,fontSize:12}}>{r.nome}</td><td className="num" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
             <tr className="rf-tot strong"><td>Totale attivo</td><td className="num">{num2(sp.attivo)}</td></tr>
             <tr><td style={{fontWeight:700,paddingTop:10}}>PASSIVO E NETTO</td><td></td></tr>
             <tr><td style={{fontWeight:600,paddingLeft:12}}>Patrimonio netto</td><td className="num">{num2(sp.pn)}</td></tr>
-            {sp.pnRows.map(r=><tr key={'pn'+r.cod}><td style={{paddingLeft:26,fontSize:12}}><span className="drill-link" onClick={()=>setDrill(r.cod)} title="Vedi i movimenti del periodo">{r.nome}</span></td><td className="num" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
+            {sp.pnRows.map(r=><tr key={'pn'+r.cod}><td style={{paddingLeft:26,fontSize:12}}>{r.nome}</td><td className="num" style={{fontSize:12}}>{num2(r.saldo)}</td></tr>)}
             <tr><td style={{paddingLeft:12}}>Risultato d'esercizio <span style={{fontSize:11,color:'var(--ink-3)'}}>(progressivo)</span></td><td className={'num '+(sp.risEserc<0?'neg':'pos')}>{num2(sp.risEserc)}</td></tr>
             <tr className="rf-tot strong"><td>Totale passivo e netto</td><td className="num">{num2(sp.totPassivoNetto)}</td></tr>
             {Math.abs(sp.sbilancio)>0.005 && <tr><td style={{color:'var(--danger)',fontSize:12}}>Sbilancio da verificare</td><td className="num neg" style={{fontSize:12}}>{num2(sp.sbilancio)}</td></tr>}
@@ -2359,8 +2297,6 @@ function PageChiusura({scritture, categorie, toast}){
       <div style={{fontSize:12,color:'var(--ink-3)',marginTop:14,fontStyle:'italic'}}>
         Report ricalcolato in tempo reale dal libro giornale — nessun dato viene scritto. In modalità <b>mensile</b> i flussi (liquidità, conto economico, rendiconto) coprono solo il mese selezionato; in <b>progressivo</b> vanno da gennaio al mese scelto. Lo <b>stato patrimoniale</b> è sempre una fotografia dei saldi a fine mese e non dipende dalla modalità. Nel rendiconto la riga «giroconti e movimenti non operativi» riconcilia il flusso operativo con la variazione effettiva di cassa.
       </div>
-
-      {drill!=null && <DrillConto cod={drill} scritture={scritture} mk={mk} mode={mode} onClose={()=>setDrill(null)}/>}
     </div>
   );
 }
@@ -2446,12 +2382,16 @@ function PageCespiti({cespiti,setCespiti,toast}){
    ============================================================ */
 /* mappa conti di ammortamento per "classe" normalizzata */
 function normKey(s){ return String(s||'').toUpperCase().replace(/\./g,' ').replace(/-/g,' ').replace(/\s+/g,' ').trim(); }
-const AMM_COST = {}, AMM_FONDO = {};
-CONTI.forEach(c=>{
-  const up=c.nome.toUpperCase();
-  if(c.categoria==='COSTI' && up.startsWith('AMMORTAMENTO')) AMM_COST[normKey(up.replace(/^AMMORTAMENTO/,''))]=c.codice;
-  if(c.categoria==='RETTIFICA ATTIVO' && /^F\.?\s*AMMORTAMENTO/.test(up)) AMM_FONDO[normKey(up.replace(/^F\.?\s*AMMORTAMENTO/,''))]=c.codice;
-});
+let AMM_COST = {}, AMM_FONDO = {};
+function rebuildAmmMaps(){
+  AMM_COST = {}; AMM_FONDO = {};
+  CONTI.forEach(c=>{
+    const up=c.nome.toUpperCase();
+    if(c.categoria==='COSTI' && up.startsWith('AMMORTAMENTO')) AMM_COST[normKey(up.replace(/^AMMORTAMENTO/,''))]=c.codice;
+    if(c.categoria==='RETTIFICA ATTIVO' && /^F\.?\s*AMMORTAMENTO/.test(up)) AMM_FONDO[normKey(up.replace(/^F\.?\s*AMMORTAMENTO/,''))]=c.codice;
+  });
+}
+rebuildAmmMaps();
 
 function PageAmmortamenti({cespiti, onAdd, updateCespiti, toast}){
   const [anno,setAnno]=useState(new Date().getFullYear());
@@ -2555,35 +2495,105 @@ function PageAmmortamenti({cespiti, onAdd, updateCespiti, toast}){
 /* ============================================================
    PAGINA: PIANO DEI CONTI
    ============================================================ */
-function PagePianoConti({saldi}){
+function PagePianoConti({saldi, conti, setConti, toast}){
+  const list = (conti && conti.length) ? conti : CONTI;
   const [q,setQ]=useState('');
   const [fProsp,setFProsp]=useState('');
-  const rows=CONTI.filter(c=>(!q||c.nome.toLowerCase().includes(q.toLowerCase())||String(c.codice)===q)&&(!fProsp||c.prospetto.startsWith(fProsp)));
+  const [showAdd,setShowAdd]=useState(false);
+  const nextCod = list.reduce((m,c)=>Math.max(m,c.codice||0),0)+1;
+  const [form,setForm]=useState({codice:nextCod,nome:'',prospetto:'SP',categoria:'',eccedenza:'DARE'});
+  const cats = Array.from(new Set(list.map(c=>c.categoria).filter(Boolean))).sort();
+
+  const rows=list.filter(c=>(!q||c.nome.toLowerCase().includes(q.toLowerCase())||String(c.codice)===q)&&(!fProsp||c.prospetto.startsWith(fProsp)));
+
+  const usato = cod => { const s=saldi[cod]; return !!(s&&(s.dare!==0||s.avere!==0)); };
+
+  function aggiungi(){
+    const nome=(form.nome||'').trim();
+    const codice=parseInt(form.codice,10);
+    if(!nome){ toast&&toast('Inserisci il nome del conto','error'); return; }
+    if(!codice||codice<1){ toast&&toast('Codice non valido','error'); return; }
+    if(list.some(c=>c.codice===codice)){ toast&&toast('Codice già esistente','error'); return; }
+    const categoria=(form.categoria||'').trim().toUpperCase()||'—';
+    const nuovo={codice,nome:nome.toUpperCase(),prospetto:form.prospetto,categoria,eccedenza:form.eccedenza};
+    const next=[...list,nuovo].sort((a,b)=>a.codice-b.codice);
+    setConti(next);
+    toast&&toast('Conto aggiunto','success');
+    setForm({codice:codice+1,nome:'',prospetto:form.prospetto,categoria:form.categoria,eccedenza:'DARE'});
+  }
+
+  function elimina(c){
+    if(usato(c.codice)){ toast&&toast('Impossibile eliminare: il conto ha movimenti','error'); return; }
+    if(!window.confirm(`Eliminare il conto ${c.codice} · ${c.nome}?`)) return;
+    setConti(list.filter(x=>x.codice!==c.codice));
+    toast&&toast('Conto eliminato','success');
+  }
+
   return (
     <div>
-      <PageHead title="Piano dei Conti" sub={`${CONTI.length} conti`}/>
+      <PageHead title="Piano dei Conti" sub={`${list.length} conti`}/>
       <div className="filters">
         <input type="text" placeholder="Cerca per nome o codice…" value={q} onChange={e=>setQ(e.target.value)}/>
         <span className="label">Prospetto</span>
         <select value={fProsp} onChange={e=>setFProsp(e.target.value)}><option value="">Tutti</option><option value="SP">Stato Patrimoniale</option><option value="CE">Conto Economico</option></select>
+        <div style={{flex:1}}></div>
+        <button className="btn accent sm" onClick={()=>setShowAdd(s=>!s)}>{showAdd?'Chiudi':'+ Nuovo conto'}</button>
       </div>
+
+      {showAdd && <div className="card" style={{marginBottom:18}}>
+        <div className="card-title">Nuovo conto</div>
+        <div style={{display:'flex',gap:12,flexWrap:'wrap',alignItems:'flex-end'}}>
+          <div className="form-row" style={{maxWidth:90}}>
+            <label>Codice</label>
+            <input type="number" value={form.codice} onChange={e=>setForm(f=>({...f,codice:e.target.value}))}/>
+          </div>
+          <div className="form-row" style={{flex:1,minWidth:200}}>
+            <label>Nome conto</label>
+            <input type="text" value={form.nome} onChange={e=>setForm(f=>({...f,nome:e.target.value}))} placeholder="ES. NUOVO CONTO" onKeyDown={e=>{if(e.key==='Enter')aggiungi();}}/>
+          </div>
+          <div className="form-row" style={{maxWidth:120}}>
+            <label>Prospetto</label>
+            <select value={form.prospetto} onChange={e=>setForm(f=>({...f,prospetto:e.target.value}))}><option>SP</option><option>CE</option><option>CE/SP</option></select>
+          </div>
+          <div className="form-row" style={{minWidth:180}}>
+            <label>Categoria</label>
+            <input list="pc-cat-list" value={form.categoria} onChange={e=>setForm(f=>({...f,categoria:e.target.value}))} placeholder="ES. COSTI"/>
+            <datalist id="pc-cat-list">{cats.map(k=><option key={k} value={k}/>)}</datalist>
+          </div>
+          <div className="form-row" style={{maxWidth:150}}>
+            <label>Eccedenza</label>
+            <select value={form.eccedenza} onChange={e=>setForm(f=>({...f,eccedenza:e.target.value}))}><option>DARE</option><option>AVERE</option><option>DARE/AVERE</option></select>
+          </div>
+          <button className="btn accent" onClick={aggiungi}>Aggiungi</button>
+        </div>
+      </div>}
+
       <div className="tbl-wrap">
         <table className="tbl">
-          <thead><tr><th style={{width:50}}>Cod</th><th>Conto</th><th>Prospetto</th><th>Categoria</th><th>Eccedenza</th><th className="num">Saldo</th></tr></thead>
+          <thead><tr><th style={{width:50}}>Cod</th><th>Conto</th><th>Prospetto</th><th>Categoria</th><th>Eccedenza</th><th className="num">Saldo</th><th style={{width:44}}></th></tr></thead>
           <tbody>
             {rows.sort((a,b)=>a.codice-b.codice).map(c=>{
               const s=saldi[c.codice];
+              const inUse=usato(c.codice);
               return <tr key={c.codice}>
                 <td className="mono">{c.codice}</td><td><b>{c.nome}</b></td>
                 <td><span className="pill">{c.prospetto}</span></td>
                 <td style={{fontSize:12}}>{c.categoria}</td>
                 <td style={{fontSize:12,color:'var(--ink-3)'}}>{c.eccedenza}</td>
                 <td className={'num '+(s&&s.saldo<0?'neg':'')}>{s&&(s.dare!==0||s.avere!==0)?num2(s.saldo):'—'}</td>
+                <td style={{textAlign:'center'}}>
+                  <button
+                    onClick={()=>elimina(c)}
+                    disabled={inUse}
+                    title={inUse?'Conto con movimenti: non eliminabile':'Elimina conto'}
+                    style={{background:'transparent',border:'none',color:inUse?'var(--rule-2)':'var(--danger)',fontSize:15,lineHeight:1,padding:'2px 6px',cursor:inUse?'not-allowed':'pointer'}}>✕</button>
+                </td>
               </tr>;
             })}
           </tbody>
         </table>
       </div>
+      <div style={{fontSize:12,color:'var(--ink-3)',marginTop:10,fontStyle:'italic'}}>I conti con movimenti non possono essere eliminati. Le modifiche al piano dei conti vengono salvate automaticamente.</div>
     </div>
   );
 }
@@ -2827,7 +2837,9 @@ function PageExport({scritture, cespiti, saldi, categorie, toast}){
    Formato standard atteso (intestazioni, ordine libero):
    Data | Conto | Tipo | Categoria | Descrizione | Importo
    ============================================================ */
-const LIQ_ALIAS = (()=>{ const m={}; CONTI.filter(c=>c.categoria==='DISP. LIQUIDE').forEach(c=>{ m[normKey(c.nome)]=c.codice; }); m['PREPAGATA']=9; m['BPER']=1; m['CONTO']=1; return m; })();
+let LIQ_ALIAS = {};
+function rebuildLiqAlias(){ const m={}; CONTI.filter(c=>c.categoria==='DISP. LIQUIDE').forEach(c=>{ m[normKey(c.nome)]=c.codice; }); m['PREPAGATA']=9; m['BPER']=1; m['CONTO']=1; LIQ_ALIAS=m; }
+rebuildLiqAlias();
 function resolveLiq(v){ const k=normKey(v); if(LIQ_ALIAS[k]!=null) return LIQ_ALIAS[k]; for(const a in LIQ_ALIAS){ if(k.includes(a)||a.includes(k)) return LIQ_ALIAS[a]; } return ''; }
 function parseDataCell(v){
   if(v instanceof Date && !isNaN(v)) return v.toISOString().slice(0,10);
@@ -3377,6 +3389,7 @@ function seedCespitiObj(){
 function App({authUser, onLogout}){
   const [scritture,setScritture]=useState([]);
   const [cespiti,setCespiti]=useState([]);
+  const [conti,setContiState]=useState(CONTI);
   const [mappa,setMappaState]=useState({});
   const [categorie,setCategorieState]=useState(seedCategorie());
   const [budget,setBudgetState]=useState({});
@@ -3403,6 +3416,8 @@ function App({authUser, onLogout}){
         if(val==null){ cref.set(seedCespitiObj()); return; }
         setCespiti(Object.entries(val).map(([id,v])=>({id,...v})));
       });
+      const ctref=db.ref('conti');
+      ctref.on('value',snap=>{ const v=snap.val(); if(v==null){ ctref.set(CONTI); return; } const arr=(Array.isArray(v)?v.filter(Boolean):Object.values(v)); applyConti(arr); setContiState(arr); });
       db.ref('mappaCategorie').on('value',snap=>setMappaState(snap.val()||{}));
       const catref=db.ref('categorieRF');
       catref.on('value',snap=>{ const v=snap.val(); if(v==null){ catref.set(seedCategorie()); return; } setCategorieState(Array.isArray(v)?v.filter(Boolean):Object.values(v)); });
@@ -3441,6 +3456,12 @@ function App({authUser, onLogout}){
     setMappaState(m);
     if(firebaseReady){ db.ref('mappaCategorie').set(m); }
     else { try{ localStorage.setItem('contabilita_mappa_v1', JSON.stringify(m)); }catch(e){} }
+  };
+  const setConti = list => {
+    applyConti(list);
+    setContiState(list);
+    if(firebaseReady){ db.ref('conti').set(list); }
+    else { saveContiLS(list); }
   };
   const setCategorie = list => {
     setCategorieState(list);
@@ -3511,7 +3532,7 @@ function App({authUser, onLogout}){
           {page==='bilancio' && <PageBilancio saldi={saldi}/>}
           {page==='rendiconto' && <PageRendiconto scritture={scritture} categorie={categorie}/>}
           {page==='controller' && <PageController scritture={scritture} categorie={categorie} budget={budget} setBudget={setBudget}/>}
-          {page==='pianoconti' && <PagePianoConti saldi={saldi}/>}
+          {page==='pianoconti' && <PagePianoConti saldi={saldi} conti={conti} setConti={setConti} toast={showToast}/>}
           {page==='cespiti' && <PageCespiti cespiti={cespiti} setCespiti={updateCespiti} toast={showToast}/>}
           {page==='ammortamenti' && <PageAmmortamenti cespiti={cespiti} onAdd={addScrittura} updateCespiti={updateCespiti} toast={showToast}/>}
           {page==='categorie' && <PageCategorie categorie={categorie} setCategorie={setCategorie} scritture={scritture} toast={showToast}/>}
