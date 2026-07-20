@@ -816,6 +816,7 @@ table.tbl.rf-matrix.rf-fit{ min-width:0; }
 .tbl.rf-matrix .rf-group td.rf-voce{ background:var(--panel-2); }
 .tbl.rf-matrix .rf-group:hover td{ background:var(--accent-soft); }
 .tbl.rf-matrix .rf-row td.rf-voce.sub{ padding-left:22px; color:var(--ink-2); font-weight:400; }
+.tbl.rf-matrix .rf-row.rf-click:hover td{ background:var(--accent-soft); }
 .tbl.rf-matrix .rf-row td{ color:var(--ink-2); }
 .tbl.rf-matrix .rf-tot td{ font-weight:600; border-top:1px solid var(--line); }
 .tbl.rf-matrix .rf-tot td.rf-voce{ font-weight:600; }
@@ -1032,6 +1033,63 @@ function DrillCassa({cod, scritture, onClose}){
                     <td>{l.descr}{l.tipo==='giroconto'&&<span className="pill giroconto" style={{marginLeft:6}}>giroconto</span>}</td>
                     <td className={'num '+(l.d>0?'pos':'neg')}>{l.d>0?'+':'−'}{num2(l.d>0?l.d:l.a)}</td>
                     <td className={'num '+(l.saldo<0?'neg':'')}>{num2(l.saldo)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* Pop-up movimenti di una riga del Rendiconto (categoria + sezione) */
+function DrillRendiconto({sezKey, sezLabel, catNome, scritture, categorie, onClose}){
+  const catSez={}; (categorie||[]).forEach(c=>{ catSez[nk(c.nome)]=c.sezione; });
+  const liq=LIQ_CODES; const isOpening=s=>/apertur/i.test(s.descr||'');
+  const lines=[];
+  (scritture||[]).forEach(s=>{
+    if(isOpening(s)||s.tipo==='giroconto') return;
+    const liqLines=(s.righe||[]).filter(r=>liq.includes(r.c));
+    if(liqLines.length===0) return;
+    const cat=catOf(s); const sez=catSez[nk(cat)]||null;
+    if(sez==='interno') return;
+    const dIn=r2(liqLines.reduce((x,r)=>x+(r.d||0),0));
+    const aOut=r2(liqLines.reduce((x,r)=>x+(r.a||0),0));
+    const amount=Math.abs(r2(dIn-aOut)); if(amount<=0) return;
+    const inflow=dIn>=aOut;
+    const section = sez==='investimento'?'investimento':(sez==='entrata'?'entrata':(sez==='uscita'?'uscita':(inflow?'entrata':'uscita')));
+    const cn=cat||'(senza categoria)';
+    if(section!==sezKey || cn!==catNome) return;
+    lines.push({id:s.id,data:s.data,descr:s.descr,amount});
+  });
+  lines.sort((a,b)=>(a.data||'').localeCompare(b.data||''));
+  const tot=r2(lines.reduce((s,l)=>s+l.amount,0));
+  const entrata = sezKey==='entrata';
+  const view=[...lines].reverse();
+  return (
+    <div className="modal-bg" onClick={e=>{if(e.target.className==='modal-bg')onClose();}}>
+      <div className="modal" style={{maxWidth:680}}>
+        <div className="modal-head">
+          <h3>{catNome} — movimenti</h3>
+          <button className="btn ghost sm" onClick={onClose}>✕</button>
+        </div>
+        <div className="modal-body" style={{paddingTop:0}}>
+          <div style={{display:'flex',gap:18,margin:'4px 0 14px',fontSize:13,color:'var(--ink-2)'}}>
+            <span>{sezLabel}</span>
+            <span style={{marginLeft:'auto'}}>Totale <b className={entrata?'pos':'neg'}>{entrata?'+':'−'}{num2(tot)}</b></span>
+          </div>
+          <div className="tbl-wrap">
+            <table className="tbl">
+              <thead><tr><th style={{width:84}}>Data</th><th>Descrizione</th><th className="num">Importo</th></tr></thead>
+              <tbody>
+                {view.length===0 && <tr><td colSpan="3" className="empty-state">Nessun movimento</td></tr>}
+                {view.map((l,i)=>(
+                  <tr key={(l.id||'x')+'_'+i}>
+                    <td style={{whiteSpace:'nowrap'}}>{fmtDate(l.data)}</td>
+                    <td>{l.descr}</td>
+                    <td className={'num '+(entrata?'pos':'neg')}>{entrata?'+':'−'}{num2(l.amount)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1815,6 +1873,7 @@ function PageRendiconto({scritture, categorie}){
   const [vista,setVista]=useState('mensile');
   const [soloMacro,setSoloMacro]=useState(false);
   const [collapsed,setCollapsed]=useState({entrata:false,uscita:false,investimento:false});
+  const [drill,setDrill]=useState(null);
   const toggle=k=>setCollapsed(c=>({...c,[k]:!c[k]}));
   const isCollapsed=k=> soloMacro || collapsed[k];
   const rf=useMemo(()=>buildRendiconto(scritture,categorie),[scritture,categorie]);
@@ -1849,7 +1908,7 @@ function PageRendiconto({scritture, categorie}){
                     <Cell v={sez.colT} cls={sez.cls}/>
                   </tr>
                   {!isCollapsed(sez.key) && rows.map(r=>(
-                    <tr key={sez.key+r.nome} className="rf-row">
+                    <tr key={sez.key+r.nome} className="rf-row rf-click" onClick={()=>setDrill({sezKey:sez.key,sezLabel:sez.label,catNome:r.nome})} style={{cursor:'pointer'}} title="Vedi i movimenti">
                       <td className="rf-voce sub">{r.nome}</td>
                       {cols.map(k=><Cell key={k} v={r.perMese[k]||0}/>)}
                       <Cell v={r.tot}/>
@@ -1864,8 +1923,9 @@ function PageRendiconto({scritture, categorie}){
         </table>
       </div>
       <div style={{fontSize:12,color:'var(--ink-3)',marginTop:10,fontStyle:'italic'}}>
-        Costruito dalle scritture che movimentano la liquidità, raggruppate per categoria. La sezione di ogni categoria (entrata / uscita / investimento / interno) si imposta in “Categorie”. Apertura e giroconti sono esclusi dal flusso.
+        Costruito dalle scritture che movimentano la liquidità, raggruppate per categoria. La sezione di ogni categoria (entrata / uscita / investimento / interno) si imposta in “Categorie”. Apertura e giroconti sono esclusi dal flusso. Tocca una riga di dettaglio per vedere i movimenti che la compongono.
       </div>
+      {drill && <DrillRendiconto sezKey={drill.sezKey} sezLabel={drill.sezLabel} catNome={drill.catNome} scritture={scritture} categorie={categorie} onClose={()=>setDrill(null)}/>}
     </div>
   );
 }
