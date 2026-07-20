@@ -805,6 +805,11 @@
 
 /* Matrice rendiconto */
 .tbl.rf-matrix{ min-width:560px; }
+/* Modalità "Totali": solo 2 colonne, la tabella si adatta allo schermo
+   così il valore del Totale resta sempre visibile anche su mobile */
+.tbl.rf-matrix.rf-fit{ min-width:0; width:100%; }
+table.tbl.rf-matrix.rf-fit{ min-width:0; }
+.tbl.rf-matrix.rf-fit td.num, .tbl.rf-matrix.rf-fit th.num{ white-space:nowrap; }
 .tbl.rf-matrix th.rf-voce, .tbl.rf-matrix td.rf-voce{ position:sticky; left:0; background:var(--panel); text-align:left; z-index:1; min-width:190px; }
 .tbl.rf-matrix .rf-group{ cursor:pointer; }
 .tbl.rf-matrix .rf-group td{ background:var(--panel-2); font-weight:600; }
@@ -1830,7 +1835,7 @@ function PageRendiconto({scritture, categorie}){
         </div>
       </PageHead>
       <div className="tbl-wrap">
-        <table className="tbl rf-matrix">
+        <table className={'tbl rf-matrix'+(vista==='totali'?' rf-fit':'')}>
           <thead><tr><th className="rf-voce">Voce</th>{cols.map(k=><th key={k} className="num">{rfMonthLabel(k)}</th>)}<th className="num">Totale</th></tr></thead>
           <tbody>
             <tr className="rf-tot"><td className="rf-voce">Disponibilità iniziali</td>{cols.map(k=><Cell key={k} v={rf.dispIni[k]}/>)}<Cell v={rf.colTot.dispIni}/></tr>
