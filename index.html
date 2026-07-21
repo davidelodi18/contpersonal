@@ -795,6 +795,7 @@
 
 /* Libro giornale */
 .tbl.giornale .gj-head td{ background:var(--panel-2); border-top:2px solid var(--line); padding-top:10px; }
+.tbl.giornale .gj-head.gj-sel td{ background:var(--accent-soft); }
 .tbl.giornale .gj-row td{ border-top:1px solid var(--line-2,#eee); color:var(--ink-2); }
 
 /* Pivot raggruppabile */
@@ -1549,11 +1550,13 @@ function ScritturaEditor({scrittura,onSave,onDelete,onClose,toast,categorie}){
 /* ============================================================
    PAGINA: LIBRO GIORNALE
    ============================================================ */
-function PageLibroGiornale({scritture, onUpdate, onDelete, toast, categorie}){
+function PageLibroGiornale({scritture, onUpdate, onDelete, onDeleteMany, toast, categorie}){
   const [editing,setEditing]=useState(null);
   const [q,setQ]=useState('');
   const [fConto,setFConto]=useState('');
   const [fMese,setFMese]=useState('');
+  const [selected,setSelected]=useState(()=>new Set());
+  const toggleSel=id=>setSelected(prev=>{ const n=new Set(prev); n.has(id)?n.delete(id):n.add(id); return n; });
   const mesi=[...new Set(scritture.map(s=>(s.data||'').slice(0,7)).filter(Boolean))].sort().reverse();
   const contiUsati=[...new Set(scritture.flatMap(s=>s.righe.map(r=>r.c)))].sort((a,b)=>a-b);
   const cod = fConto?parseInt(fConto):null;
@@ -1616,6 +1619,20 @@ function PageLibroGiornale({scritture, onUpdate, onDelete, toast, categorie}){
   const totD=r2(list.reduce((s,e)=>s+e.righe.reduce((x,r)=>x+(r.d||0),0),0));
   const totA=r2(list.reduce((s,e)=>s+e.righe.reduce((x,r)=>x+(r.a||0),0),0));
 
+  const listIds=list.map(s=>s.id);
+  const selCount=selected.size;
+  const allSel=list.length>0 && listIds.every(id=>selected.has(id));
+  const someSel=listIds.some(id=>selected.has(id));
+  const toggleAll=()=>setSelected(prev=>{ const n=new Set(prev); if(allSel){ listIds.forEach(id=>n.delete(id)); } else { listIds.forEach(id=>n.add(id)); } return n; });
+  function bulkDelete(){
+    const ids=[...selected];
+    if(!ids.length) return;
+    if(!window.confirm(`Eliminare ${ids.length} scrittur${ids.length===1?'a':'e'} selezionat${ids.length===1?'a':'e'}? L'operazione non è reversibile.`)) return;
+    onDeleteMany(ids);
+    setSelected(new Set());
+    toast(`${ids.length} scritture eliminate`,'success');
+  }
+
   return (
     <div>
       <PageHead title="Libro Giornale" sub={`${list.length} scritture in partita doppia`}/>
@@ -1626,6 +1643,18 @@ function PageLibroGiornale({scritture, onUpdate, onDelete, toast, categorie}){
         <select value={fMese} onChange={e=>setFMese(e.target.value)}><option value="">Tutti</option>{mesi.map(m=><option key={m} value={m}>{m}</option>)}</select>
         <input type="text" placeholder="Cerca descrizione…" value={q} onChange={e=>setQ(e.target.value)}/>
       </div>
+      <div className="card" style={{marginBottom:12,display:'flex',alignItems:'center',gap:14,flexWrap:'wrap'}}>
+        <label style={{display:'flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer',userSelect:'none'}}>
+          <input type="checkbox" checked={allSel} ref={el=>{if(el)el.indeterminate=someSel&&!allSel;}} onChange={toggleAll}/>
+          Seleziona tutte ({list.length})
+        </label>
+        {selCount>0 ? <>
+          <span style={{fontSize:13,color:'var(--ink-2)'}}><b>{selCount}</b> selezionat{selCount===1?'a':'e'}</span>
+          <div style={{flex:1}}></div>
+          <button className="btn ghost sm" onClick={()=>setSelected(new Set())}>Annulla selezione</button>
+          <button className="btn danger sm" onClick={bulkDelete}>🗑 Elimina {selCount} scrittur{selCount===1?'a':'e'}</button>
+        </> : <span style={{fontSize:12,color:'var(--ink-3)'}}>Spunta le scritture da eliminare, poi premi il pulsante di eliminazione.</span>}
+      </div>
       <div className="tbl-wrap">
         <table className="tbl giornale">
           <thead><tr><th style={{width:90}}>Data</th><th>Descrizione / Conto</th><th className="num">Dare</th><th className="num">Avere</th></tr></thead>
@@ -1635,8 +1664,11 @@ function PageLibroGiornale({scritture, onUpdate, onDelete, toast, categorie}){
               const ok=Math.abs(sd-sa)<0.01;
               return (
                 <React.Fragment key={s.id}>
-                  <tr className="gj-head">
-                    <td>{fmtDate(s.data)}</td>
+                  <tr className={'gj-head'+(selected.has(s.id)?' gj-sel':'')}>
+                    <td style={{whiteSpace:'nowrap'}}>
+                      <input type="checkbox" checked={selected.has(s.id)} onChange={()=>toggleSel(s.id)} style={{marginRight:7,verticalAlign:'middle'}}/>
+                      {fmtDate(s.data)}
+                    </td>
                     <td>
                       <b>{s.descr}</b> <span className={'pill '+(s.tipo==='giroconto'?'giroconto':'')} style={{marginLeft:6}}>{s.origine==='manuale'?(s.tipo==='giroconto'?'giroconto':'manuale'):'libro'}</span>{!ok&&<span className="pill" style={{background:'#f3dada',color:'#a33',marginLeft:6}}>non quadra</span>}
                       <button className="btn ghost sm" style={{marginLeft:8}} onClick={()=>setEditing(s)}>✎ Modifica</button>
@@ -3516,6 +3548,12 @@ function App({authUser, onLogout}){
     if(firebaseReady){ db.ref('scritture/'+id).remove(); }
     else setScritture(arr=>{ const n=arr.filter(s=>s.id!==id); saveScritture(n); return n; });
   };
+  const deleteScritture = ids => {
+    if(!ids||!ids.length) return;
+    const set=new Set(ids);
+    if(firebaseReady){ const up={}; ids.forEach(id=>{ up['scritture/'+id]=null; }); db.ref().update(up); }
+    else setScritture(arr=>{ const n=arr.filter(s=>!set.has(s.id)); saveScritture(n); return n; });
+  };
   const addScritture = list => {
     if(!list||!list.length) return;
     if(firebaseReady){ const up={}; list.forEach(s=>{ const {id,...rest}=s; up['scritture/'+id]=rest; }); db.ref().update(up); }
@@ -3595,7 +3633,7 @@ function App({authUser, onLogout}){
           {page==='nuova' && <PageNuova onAdd={addScrittura} toast={showToast} categorie={categorie}/>}
           {page==='variazioni' && <PageVariazioni onAddMany={addScritture} saldi={saldi} categorie={categorie} toast={showToast}/>}
           {page==='import' && <PageImport onAddMany={addScritture} mappa={mappa} setMappa={setMappa} categorie={categorie} setCategorie={setCategorie} toast={showToast}/>}
-          {page==='giornale' && <PageLibroGiornale scritture={scritture} onUpdate={updateScrittura} onDelete={deleteScrittura} toast={showToast} categorie={categorie}/>}
+          {page==='giornale' && <PageLibroGiornale scritture={scritture} onUpdate={updateScrittura} onDelete={deleteScrittura} onDeleteMany={deleteScritture} toast={showToast} categorie={categorie}/>}
           {page==='movimenti' && <PageMovimenti scritture={scritture} saldi={saldi}/>}
           {page==='pivot' && <PagePivotConti saldi={saldi}/>}
           {page==='bilancio' && <PageBilancio saldi={saldi}/>}
