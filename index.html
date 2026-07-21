@@ -2990,19 +2990,20 @@ function PageImport({onAddMany, mappa, setMappa, categorie, setCategorie, toast}
 
   function importa(){
     if(validi.length===0){ toast('Nessuna riga completa da importare','error'); return; }
+    const isGiro=r=>LIQ_CODES.includes(r.contro);
     const scrit = validi.map(r=>({
-      id:uid(), data:r.data, descr:r.descr||(r.tipo==='E'?'Entrata':'Uscita'),
+      id:uid(), data:r.data, descr:r.descr||(isGiro(r)?'Giroconto':(r.tipo==='E'?'Entrata':'Uscita')),
       righe: r.tipo==='E' ? [{c:r.cod,d:r.importo,a:0},{c:r.contro,d:0,a:r.importo}]
                           : [{c:r.contro,d:r.importo,a:0},{c:r.cod,d:0,a:r.importo}],
-      origine:'manuale', tipo:'liquidita', cat:(r.cat||'').trim()
+      origine:'manuale', tipo: isGiro(r)?'giroconto':'liquidita', cat:(r.cat||'').trim()
     }));
     // memorizza mappatura categoria -> conto
     const nuovaMappa={...(mappa||{})};
     validi.forEach(r=>{ if(r.cat) nuovaMappa[normKey(r.cat)]=r.contro; });
-    // aggiungi categorie nuove (sezione dedotta dal tipo)
+    // aggiungi categorie nuove (sezione dedotta dal tipo; interna se giroconto tra liquidità)
     const esistenti=new Set((categorie||[]).map(c=>nk(c.nome)));
     const daAgg=[];
-    validi.forEach(r=>{ const c=(r.cat||'').trim(); if(c && !esistenti.has(nk(c))){ esistenti.add(nk(c)); daAgg.push({nome:c,sezione:r.tipo==='E'?'entrata':'uscita'}); } });
+    validi.forEach(r=>{ const c=(r.cat||'').trim(); if(c && !esistenti.has(nk(c))){ esistenti.add(nk(c)); daAgg.push({nome:c,sezione:isGiro(r)?'interno':(r.tipo==='E'?'entrata':'uscita')}); } });
     onAddMany(scrit); setMappa(nuovaMappa);
     if(daAgg.length) setCategorie([...(categorie||[]),...daAgg]);
     toast(`${scrit.length} scritture importate`,'success');
@@ -3075,14 +3076,17 @@ function PageImport({onAddMany, mappa, setMappa, categorie, setCategorie, toast}
                   <td style={{fontSize:12}}>{r.cat}</td>
                   <td><input type="text" value={r.descr} onChange={e=>setRow(i,'descr',e.target.value)} style={{minWidth:160}}/></td>
                   <td className="num">{num2(r.importo)}</td>
-                  <td><ContoSelect value={r.contro} onChange={v=>setRow(i,'contro',v)} filter={c=>c.categoria!=='DISP. LIQUIDE'}/></td>
+                  <td>
+                    <ContoSelect value={r.contro} onChange={v=>setRow(i,'contro',v)} filter={c=>c.codice!==r.cod}/>
+                    {LIQ_CODES.includes(r.contro) && <span className="pill giroconto" style={{marginLeft:6}}>giroconto</span>}
+                  </td>
                   <td><button className="btn ghost sm" onClick={()=>delRow(i)}>✕</button></td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <div style={{fontSize:12,color:'var(--ink-3)',marginTop:10,fontStyle:'italic'}}>Le righe evidenziate non hanno ancora un conto contabile assegnato e non verranno importate finché non lo scegli. La scelta viene ricordata per categoria.</div>
+        <div style={{fontSize:12,color:'var(--ink-3)',marginTop:10,fontStyle:'italic'}}>Le righe evidenziate non hanno ancora un conto contabile assegnato e non verranno importate finché non lo scegli. La scelta viene ricordata per categoria. Se come contropartita scegli un altro conto di liquidità (es. Prepagata), la riga viene registrata come <b>giroconto</b> tra i due conti ed esclusa dal rendiconto finanziario.</div>
       </>}
     </div>
   );
