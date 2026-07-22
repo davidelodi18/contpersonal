@@ -1614,13 +1614,29 @@ function ScritturaEditor({scrittura,onSave,onDelete,onClose,toast,categorie}){
 /* ============================================================
    PAGINA: LIBRO GIORNALE
    ============================================================ */
-function PageLibroGiornale({scritture, onUpdate, onDelete, onDeleteMany, toast, categorie}){
+function PageLibroGiornale({scritture, onUpdate, onDelete, onDeleteMany, updateScritture, toast, categorie}){
   const [editing,setEditing]=useState(null);
   const [q,setQ]=useState('');
   const [fConto,setFConto]=useState('');
   const [fMese,setFMese]=useState('');
+  const [fRf,setFRf]=useState('');
+  const [bulkCat,setBulkCat]=useState('');
   const [selected,setSelected]=useState(()=>new Set());
   const toggleSel=id=>setSelected(prev=>{ const n=new Set(prev); n.has(id)?n.delete(id):n.add(id); return n; });
+
+  /* stato di una scrittura rispetto al rendiconto finanziario */
+  const catSez={}; (categorie||[]).forEach(c=>{ catSez[nk(c.nome)]=c.sezione; });
+  function rfStato(s){
+    if(/apertur/i.test(s.descr||'')) return {k:'apertura',l:'apertura',rf:false};
+    if(s.tipo==='giroconto') return {k:'giroconto',l:'giroconto',rf:false};
+    const liqLines=(s.righe||[]).filter(r=>LIQ_CODES.includes(r.c));
+    if(liqLines.length===0) return {k:'nonliquida',l:'non tocca la cassa',rf:false};
+    const cat=catOf(s); const sez=catSez[nk(cat)]||null;
+    if(sez==='interno') return {k:'interno',l:'categoria interna',rf:false};
+    if(!cat) return {k:'senzacat',l:'senza categoria',rf:true};
+    if(!sez) return {k:'catignota',l:cat+' (non classificata)',rf:true};
+    return {k:'ok',l:cat,rf:true};
+  }
   const mesi=[...new Set(scritture.map(s=>(s.data||'').slice(0,7)).filter(Boolean))].sort().reverse();
   const contiUsati=[...new Set(scritture.flatMap(s=>s.righe.map(r=>r.c)))].sort((a,b)=>a-b);
   const cod = fConto?parseInt(fConto):null;
@@ -1678,7 +1694,8 @@ function PageLibroGiornale({scritture, onUpdate, onDelete, onDeleteMany, toast, 
   }
 
   // ---- VISTA GIORNALE (raggruppata per scrittura) ----
-  const list=scritture.filter(s=>(!fMese||(s.data||'').slice(0,7)===fMese)&&(!q||(s.descr||'').toLowerCase().includes(q.toLowerCase())))
+  const list=scritture.filter(s=>(!fMese||(s.data||'').slice(0,7)===fMese)&&(!q||(s.descr||'').toLowerCase().includes(q.toLowerCase()))
+      &&(!fRf || (fRf==='fuori' ? !rfStato(s).rf : (fRf==='senzacat' ? ['senzacat','catignota'].includes(rfStato(s).k) : true))))
     .sort((a,b)=>(b.data||'').localeCompare(a.data||''));
   const totD=r2(list.reduce((s,e)=>s+e.righe.reduce((x,r)=>x+(r.d||0),0),0));
   const totA=r2(list.reduce((s,e)=>s+e.righe.reduce((x,r)=>x+(r.a||0),0),0));
@@ -1688,6 +1705,13 @@ function PageLibroGiornale({scritture, onUpdate, onDelete, onDeleteMany, toast, 
   const allSel=list.length>0 && listIds.every(id=>selected.has(id));
   const someSel=listIds.some(id=>selected.has(id));
   const toggleAll=()=>setSelected(prev=>{ const n=new Set(prev); if(allSel){ listIds.forEach(id=>n.delete(id)); } else { listIds.forEach(id=>n.add(id)); } return n; });
+  function bulkAssign(){
+    const ids=[...selected];
+    if(!ids.length || !bulkCat) return;
+    updateScritture(ids.map(id=>({id,patch:{cat:bulkCat}})));
+    setSelected(new Set()); setBulkCat('');
+    toast(`${ids.length} scritture assegnate a ${bulkCat}`,'success');
+  }
   function bulkDelete(){
     const ids=[...selected];
     if(!ids.length) return;
@@ -1706,7 +1730,17 @@ function PageLibroGiornale({scritture, onUpdate, onDelete, onDeleteMany, toast, 
         <span className="label">Mese</span>
         <select value={fMese} onChange={e=>setFMese(e.target.value)}><option value="">Tutti</option>{mesi.map(m=><option key={m} value={m}>{m}</option>)}</select>
         <input type="text" placeholder="Cerca descrizione…" value={q} onChange={e=>setQ(e.target.value)}/>
+        <span className="label">Rendiconto</span>
+        <select value={fRf} onChange={e=>setFRf(e.target.value)}>
+          <option value="">Tutte</option>
+          <option value="senzacat">Senza categoria RF</option>
+          <option value="fuori">Escluse dal rendiconto</option>
+        </select>
       </div>
+      {(()=>{ const nSenza=scritture.filter(s=>['senzacat','catignota'].includes(rfStato(s).k)).length;
+        return nSenza>0 && fRf!=='senzacat' ? <div style={{fontSize:12.5,color:'var(--warn,#8a6d1f)',marginBottom:10}}>
+          ⚠ {nSenza} scrittur{nSenza===1?'a entra':'e entrano'} nel rendiconto senza una categoria classificata — <a href="#" onClick={e=>{e.preventDefault();setFRf('senzacat');}} style={{color:'inherit',textDecoration:'underline'}}>mostrale</a>
+        </div> : null; })()}
       <div className="card" style={{marginBottom:12,display:'flex',alignItems:'center',gap:14,flexWrap:'wrap'}}>
         <label style={{display:'flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer',userSelect:'none'}}>
           <input type="checkbox" checked={allSel} ref={el=>{if(el)el.indeterminate=someSel&&!allSel;}} onChange={toggleAll}/>
@@ -1715,6 +1749,8 @@ function PageLibroGiornale({scritture, onUpdate, onDelete, onDeleteMany, toast, 
         {selCount>0 ? <>
           <span style={{fontSize:13,color:'var(--ink-2)'}}><b>{selCount}</b> selezionat{selCount===1?'a':'e'}</span>
           <div style={{flex:1}}></div>
+          <CatSelect value={bulkCat} onChange={setBulkCat} categorie={categorie} style={{maxWidth:230}}/>
+          <button className="btn accent sm" disabled={!bulkCat} onClick={bulkAssign}>Assegna categoria</button>
           <button className="btn ghost sm" onClick={()=>setSelected(new Set())}>Annulla selezione</button>
           <button className="btn danger sm" onClick={bulkDelete}>🗑 Elimina {selCount} scrittur{selCount===1?'a':'e'}</button>
         </> : <span style={{fontSize:12,color:'var(--ink-3)'}}>Spunta le scritture da eliminare, poi premi il pulsante di eliminazione.</span>}
@@ -1735,6 +1771,11 @@ function PageLibroGiornale({scritture, onUpdate, onDelete, onDeleteMany, toast, 
                     </td>
                     <td>
                       <b>{s.descr}</b> <span className={'pill '+(s.tipo==='giroconto'?'giroconto':'')} style={{marginLeft:6}}>{s.origine==='manuale'?(s.tipo==='giroconto'?'giroconto':'manuale'):'libro'}</span>{!ok&&<span className="pill" style={{background:'#f3dada',color:'#a33',marginLeft:6}}>non quadra</span>}
+                      {(()=>{ const st=rfStato(s);
+                        const stile = st.k==='ok' ? {background:'var(--accent-soft)',color:'var(--accent-ink)'}
+                          : (st.rf ? {background:'#f7ecd2',color:'#7a5a1d'} : {background:'var(--panel-2)',color:'var(--ink-3)'});
+                        return <span className="pill" style={{...stile,marginLeft:6}} title={st.rf?'Inclusa nel rendiconto':'Non entra nel rendiconto'}>{st.rf?'':'⊘ '}{st.l}</span>;
+                      })()}
                       <button className="btn ghost sm" style={{marginLeft:8}} onClick={()=>setEditing(s)}>✎ Modifica</button>
                     </td>
                     <td className="num"></td><td className="num"></td>
@@ -3757,7 +3798,7 @@ function App({authUser, onLogout}){
           {page==='nuova' && <PageNuova onAdd={addScrittura} toast={showToast} categorie={categorie}/>}
           {page==='variazioni' && <PageVariazioni onAddMany={addScritture} saldi={saldi} categorie={categorie} toast={showToast}/>}
           {page==='import' && <PageImport onAddMany={addScritture} mappa={mappa} setMappa={setMappa} categorie={categorie} setCategorie={setCategorie} toast={showToast}/>}
-          {page==='giornale' && <PageLibroGiornale scritture={scritture} onUpdate={updateScrittura} onDelete={deleteScrittura} onDeleteMany={deleteScritture} toast={showToast} categorie={categorie}/>}
+          {page==='giornale' && <PageLibroGiornale scritture={scritture} onUpdate={updateScrittura} onDelete={deleteScrittura} onDeleteMany={deleteScritture} updateScritture={updateScritture} toast={showToast} categorie={categorie}/>}
           {page==='movimenti' && <PageMovimenti scritture={scritture} saldi={saldi}/>}
           {page==='pivot' && <PagePivotConti saldi={saldi}/>}
           {page==='bilancio' && <PageBilancio saldi={saldi}/>}
