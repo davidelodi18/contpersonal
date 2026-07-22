@@ -895,18 +895,33 @@ function applyConti(list){ CONTI = list; rebuildContiDerivati(); }
 
 /* ---- categorie rendiconto ---- */
 function nk(s){ return String(s||'').toUpperCase().replace(/\./g,' ').replace(/-/g,' ').replace(/\s+/g,' ').trim(); }
+let MAPPA_CAT = {};
+let CAT_NAMES = {};      // nk(nome) -> nome originale della categoria
+let CAT_BY_CONTO = {};   // codice conto -> nome categoria (solo se univoca)
 function defaultCatOf(s){
   const nonliq=(s.righe||[]).filter(r=>!LIQ_CODES.includes(r.c));
   if(s.tipo==='giroconto') return 'Giroconto';
-  if(nonliq.length===1) return contoByCode[nonliq[0].c]?.nome||'';
+  if(nonliq.length===1){
+    const cod=nonliq[0].c;
+    // se al conto è associata una sola categoria, usa quella (es. conto "LAVORO C/ACQUISTI" -> categoria "LAVORO")
+    const mapped=CAT_BY_CONTO[cod];
+    if(mapped) return mapped;
+    return contoByCode[cod]?.nome||'';
+  }
   return '';
 }
 function catOf(s){ return (s.cat!=null && s.cat!=='') ? s.cat : defaultCatOf(s); }
 
 /* ---- tipo di operazione di una categoria (ricavo / costo / investimento) ----
    dedotto dal conto collegato: prima la mappatura dell'import, poi il conto omonimo */
-let MAPPA_CAT = {};
-function setMappaCat(m){ MAPPA_CAT = m || {}; }
+function rebuildCatByConto(){
+  const perConto={};
+  Object.entries(MAPPA_CAT).forEach(([k,cod])=>{ if(cod==null||cod==='') return; (perConto[cod]=perConto[cod]||[]).push(k); });
+  CAT_BY_CONTO={};
+  Object.entries(perConto).forEach(([cod,ks])=>{ if(ks.length===1) CAT_BY_CONTO[cod]=CAT_NAMES[ks[0]]||ks[0]; });
+}
+function setMappaCat(m){ MAPPA_CAT = m || {}; rebuildCatByConto(); }
+function setCatNames(list){ CAT_NAMES={}; (list||[]).forEach(c=>{ if(c&&c.nome) CAT_NAMES[nk(c.nome)]=c.nome; }); rebuildCatByConto(); }
 function catTipoOf(nome){
   const k = nk(nome);
   let cod = MAPPA_CAT[k];
@@ -3588,7 +3603,7 @@ function App({authUser, onLogout}){
   const [cespiti,setCespiti]=useState([]);
   const [conti,setContiState]=useState(CONTI);
   const [mappa,setMappaState]=useState({});
-  const [categorie,setCategorieState]=useState(seedCategorie());
+  const [categorie,setCategorieState]=useState(()=>{ const c=seedCategorie(); setCatNames(c); return c; });
   const [budget,setBudgetState]=useState({});
   const [ready,setReady]=useState(false);
   const [page,setPage]=useState('dashboard');
@@ -3617,12 +3632,12 @@ function App({authUser, onLogout}){
       ctref.on('value',snap=>{ const v=snap.val(); if(v==null){ ctref.set(CONTI); return; } const arr=(Array.isArray(v)?v.filter(Boolean):Object.values(v)); applyConti(arr); setContiState(arr); });
       db.ref('mappaCategorie').on('value',snap=>{ const m=snap.val()||{}; setMappaCat(m); setMappaState(m); });
       const catref=db.ref('categorieRF');
-      catref.on('value',snap=>{ const v=snap.val(); if(v==null){ catref.set(seedCategorie()); return; } setCategorieState(Array.isArray(v)?v.filter(Boolean):Object.values(v)); });
+      catref.on('value',snap=>{ const v=snap.val(); if(v==null){ catref.set(seedCategorie()); return; } const arr=Array.isArray(v)?v.filter(Boolean):Object.values(v); setCatNames(arr); setCategorieState(arr); });
       db.ref('budget').on('value',snap=>setBudgetState(snap.val()||{}));
     } else {
       setScritture(loadScritture()); setCespiti(loadCespiti()); setReady(true);
       try{ const m=JSON.parse(localStorage.getItem('contabilita_mappa_v1')||'{}'); setMappaCat(m); setMappaState(m); }catch(e){}
-      try{ const c=JSON.parse(localStorage.getItem('contabilita_cat_v1')||'null'); if(c) setCategorieState(c); }catch(e){}
+      try{ const c=JSON.parse(localStorage.getItem('contabilita_cat_v1')||'null'); if(c){ setCatNames(c); setCategorieState(c); } }catch(e){}
       try{ setBudgetState(JSON.parse(localStorage.getItem('contabilita_budget_v1')||'{}')); }catch(e){}
     }
   },[]);
@@ -3679,6 +3694,7 @@ function App({authUser, onLogout}){
     else { saveContiLS(list); }
   };
   const setCategorie = list => {
+    setCatNames(list);
     setCategorieState(list);
     if(firebaseReady){ db.ref('categorieRF').set(list); }
     else { try{ localStorage.setItem('contabilita_cat_v1', JSON.stringify(list)); }catch(e){} }
