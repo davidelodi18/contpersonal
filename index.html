@@ -902,6 +902,49 @@ function defaultCatOf(s){
   return '';
 }
 function catOf(s){ return (s.cat!=null && s.cat!=='') ? s.cat : defaultCatOf(s); }
+
+/* ---- tipo di operazione di una categoria (ricavo / costo / investimento) ----
+   dedotto dal conto collegato: prima la mappatura dell'import, poi il conto omonimo */
+let MAPPA_CAT = {};
+function setMappaCat(m){ MAPPA_CAT = m || {}; }
+function catTipoOf(nome){
+  const k = nk(nome);
+  let cod = MAPPA_CAT[k];
+  if(cod==null) cod = codeByName[String(nome||'').toUpperCase().replace(/\./g,' ').replace(/\s+/g,' ').trim()];
+  const c = (cod!=null) ? contoByCode[cod] : null;
+  if(!c) return '';
+  if(c.categoria==='RICAVI') return 'ricavo';
+  if(c.categoria==='COSTI') return 'costo';
+  if(c.categoria==='RICAVI/COSTI') return 'ricavo/costo';
+  if(/^IMM\./.test(c.categoria)) return 'investimento';
+  return '';
+}
+const TIPO_ORD = {'ricavo':0,'ricavo/costo':1,'costo':2,'investimento':3,'':9};
+const SEZ_ORD = [{k:'entrata',l:'Entrate'},{k:'uscita',l:'Uscite'},{k:'investimento',l:'Investimenti'},{k:'interno',l:'Interne (fuori flusso)'}];
+
+/* Selettore categoria: raggruppato per sezione (entrate/uscite/…) e,
+   dentro ogni gruppo, ordinato per tipo di operazione (ricavi prima dei costi) */
+function CatSelect({value, onChange, categorie, sezioni, style}){
+  const list = (categorie||[]).filter(c=>!sezioni || sezioni.includes(c.sezione));
+  const gruppi = SEZ_ORD.map(g=>({
+    ...g,
+    items: list.filter(c=>c.sezione===g.k)
+      .map(c=>({...c, tipo:catTipoOf(c.nome)}))
+      .sort((a,b)=>(TIPO_ORD[a.tipo]-TIPO_ORD[b.tipo]) || a.nome.localeCompare(b.nome,'it'))
+  })).filter(g=>g.items.length);
+  const orfane = list.filter(c=>!SEZ_ORD.some(g=>g.k===c.sezione)).sort((a,b)=>a.nome.localeCompare(b.nome,'it'));
+  return (
+    <select value={value} onChange={e=>onChange(e.target.value)} style={style}>
+      <option value="">— nessuna —</option>
+      {gruppi.map(g=>(
+        <optgroup key={g.k} label={g.l}>
+          {g.items.map(c=><option key={c.nome} value={c.nome}>{c.nome}{c.tipo?' · '+c.tipo:''}</option>)}
+        </optgroup>
+      ))}
+      {orfane.length>0 && <optgroup label="Altre">{orfane.map(c=><option key={c.nome} value={c.nome}>{c.nome}</option>)}</optgroup>}
+    </select>
+  );
+}
 function seedCategorie(){
   const out=[]; const seen=new Set();
   CONTI.forEach(c=>{
@@ -1046,7 +1089,8 @@ function DrillCassa({cod, scritture, onClose}){
 }
 
 /* Pop-up movimenti di una riga del Rendiconto (categoria + sezione) */
-function DrillRendiconto({sezKey, sezLabel, catNome, scritture, categorie, onClose}){
+function DrillRendiconto({sezKey, sezLabel, catNome, scritture, categorie, updateScritture, toast, onClose}){
+  const [nuovaCat,setNuovaCat]=useState('');
   const catSez={}; (categorie||[]).forEach(c=>{ catSez[nk(c.nome)]=c.sezione; });
   const liq=LIQ_CODES; const isOpening=s=>/apertur/i.test(s.descr||'');
   const lines=[];
@@ -1081,6 +1125,17 @@ function DrillRendiconto({sezKey, sezLabel, catNome, scritture, categorie, onClo
             <span>{sezLabel}</span>
             <span style={{marginLeft:'auto'}}>Totale <b className={entrata?'pos':'neg'}>{entrata?'+':'−'}{num2(tot)}</b></span>
           </div>
+          {updateScritture && lines.length>0 && <div style={{background:'var(--panel-2)',borderRadius:6,padding:'10px 12px',marginBottom:14,display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+            <span style={{fontSize:12.5,color:'var(--ink-2)'}}>Riassegna a</span>
+            <CatSelect value={nuovaCat} onChange={setNuovaCat} categorie={categorie}/>
+            <button className="btn accent sm" disabled={!nuovaCat||nk(nuovaCat)===nk(catNome)} onClick={()=>{
+              if(!nuovaCat||nk(nuovaCat)===nk(catNome)) return;
+              if(!window.confirm(`Spostare ${lines.length} moviment${lines.length===1?'o':'i'} da "${catNome}" a "${nuovaCat}"?`)) return;
+              updateScritture(lines.map(l=>({id:l.id,patch:{cat:nuovaCat}})));
+              toast&&toast(`${lines.length} scritture riassegnate a ${nuovaCat}`,'success');
+              onClose();
+            }}>Applica a {lines.length} moviment{lines.length===1?'o':'i'}</button>
+          </div>}
           <div className="tbl-wrap">
             <table className="tbl">
               <thead><tr><th style={{width:84}}>Data</th><th>Descrizione</th><th className="num">Importo</th></tr></thead>
@@ -1292,10 +1347,7 @@ function PageNuova({onAdd, toast, categorie}){
             </div>
             <div className="form-row"><label>Importo <span className="req">*</span></label><input type="number" step="0.01" value={importo} onChange={e=>setImporto(e.target.value)} placeholder="0,00"/></div>
             <div className="form-row"><label>Categoria rendiconto</label>
-              <select value={cat} onChange={e=>setCat(e.target.value)}>
-                <option value="">— nessuna —</option>
-                {(categorie||[]).filter(c=>verso==='E'?c.sezione==='entrata':(c.sezione==='uscita'||c.sezione==='investimento')).map(c=><option key={c.nome} value={c.nome}>{c.nome}</option>)}
-              </select>
+              <CatSelect value={cat} onChange={setCat} categorie={categorie} sezioni={verso==='E'?['entrata']:['uscita','investimento']}/>
             </div>
             <div style={{background:'var(--panel-2)',borderRadius:6,padding:'12px 14px',fontSize:12.5,color:'var(--ink-2)'}}>
               {verso==='E'
@@ -1508,10 +1560,7 @@ function ScritturaEditor({scrittura,onSave,onDelete,onClose,toast,categorie}){
           <div className="form-row"><label>Data</label><input type="date" value={data} onChange={e=>setData(e.target.value)}/></div>
           <div className="form-row"><label>Descrizione</label><input type="text" value={descr} onChange={e=>setDescr(e.target.value)}/></div>
           <div className="form-row"><label>Categoria rendiconto</label>
-            <select value={cat} onChange={e=>setCat(e.target.value)}>
-              <option value="">— nessuna —</option>
-              {(categorie||[]).map(c=><option key={c.nome} value={c.nome}>{c.nome} · {c.sezione}</option>)}
-            </select>
+            <CatSelect value={cat} onChange={setCat} categorie={categorie}/>
           </div>
           <div className="tbl-wrap">
             <table className="tbl">
@@ -1901,7 +1950,7 @@ function buildRendiconto(scritture, categorie){
   return {mesi,dispIni,dispFin,totEnt,totUsc,totInv,flusso,colTot,rows:{entrata:catRows('entrata'),uscita:catRows('uscita'),investimento:catRows('investimento')}};
 }
 
-function PageRendiconto({scritture, categorie}){
+function PageRendiconto({scritture, categorie, updateScritture, toast}){
   const [vista,setVista]=useState('mensile');
   const [soloMacro,setSoloMacro]=useState(false);
   const [collapsed,setCollapsed]=useState({entrata:false,uscita:false,investimento:false});
@@ -1957,7 +2006,7 @@ function PageRendiconto({scritture, categorie}){
       <div style={{fontSize:12,color:'var(--ink-3)',marginTop:10,fontStyle:'italic'}}>
         Costruito dalle scritture che movimentano la liquidità, raggruppate per categoria. La sezione di ogni categoria (entrata / uscita / investimento / interno) si imposta in “Categorie”. Apertura e giroconti sono esclusi dal flusso. Tocca una riga di dettaglio per vedere i movimenti che la compongono.
       </div>
-      {drill && <DrillRendiconto sezKey={drill.sezKey} sezLabel={drill.sezLabel} catNome={drill.catNome} scritture={scritture} categorie={categorie} onClose={()=>setDrill(null)}/>}
+      {drill && <DrillRendiconto sezKey={drill.sezKey} sezLabel={drill.sezLabel} catNome={drill.catNome} scritture={scritture} categorie={categorie} updateScritture={updateScritture} toast={toast} onClose={()=>setDrill(null)}/>}
     </div>
   );
 }
@@ -3248,9 +3297,10 @@ function PageController({scritture, categorie, budget, setBudget}){
 /* ============================================================
    PAGINA: CATEGORIE (rendiconto)
    ============================================================ */
-function PageCategorie({categorie, setCategorie, scritture, toast}){
+function PageCategorie({categorie, setCategorie, scritture, updateScritture, mappa, setMappa, toast}){
   const [nuovaNome,setNuovaNome]=useState('');
   const [nuovaSez,setNuovaSez]=useState('uscita');
+  const [draft,setDraft]=useState({});   // rinomina in corso: indice -> testo digitato
   // conteggio utilizzi per categoria
   const usi={}; (scritture||[]).forEach(s=>{ const c=catOf(s); if(c) usi[nk(c)]=(usi[nk(c)]||0)+1; });
 
@@ -3261,10 +3311,33 @@ function PageCategorie({categorie, setCategorie, scritture, toast}){
     toast('Categoria aggiunta','success');
   }
   function setSez(i,v){ setCategorie(categorie.map((c,j)=>j===i?{...c,sezione:v}:c)); }
-  function rename(i,v){ setCategorie(categorie.map((c,j)=>j===i?{...c,nome:v}:c)); }
+
+  /* la rinomina si conferma uscendo dal campo (o con Invio):
+     il nuovo nome viene propagato a tutte le scritture che usano la categoria */
+  function renameCommit(i){
+    const c=categorie[i]; if(!c) return;
+    const nuovo=(draft[i]!=null?draft[i]:c.nome).trim();
+    setDraft(d=>{ const n={...d}; delete n[i]; return n; });
+    if(!nuovo || nuovo===c.nome) return;
+    if(categorie.some((x,j)=>j!==i && nk(x.nome)===nk(nuovo))){ toast('Esiste già una categoria con questo nome','error'); return; }
+    const vecchio=c.nome;
+    setCategorie(categorie.map((x,j)=>j===i?{...x,nome:nuovo}:x));
+    // stesso nome a meno di maiuscole/spazi: le scritture restano collegate, non serve toccarle
+    if(nk(nuovo)===nk(vecchio)){ toast('Categoria rinominata','success'); return; }
+    // aggiorna le scritture che usano la vecchia categoria
+    const target=(scritture||[]).filter(s=>nk(catOf(s))===nk(vecchio));
+    if(target.length && updateScritture) updateScritture(target.map(s=>({id:s.id,patch:{cat:nuovo}})));
+    // aggiorna la mappatura categoria -> conto usata dall'import
+    if(mappa && setMappa){
+      const k=normKey(vecchio);
+      if(mappa[k]!=null){ const m={...mappa}; m[normKey(nuovo)]=m[k]; delete m[k]; setMappa(m); }
+    }
+    toast(target.length?`Categoria rinominata — ${target.length} scrittur${target.length===1?'a aggiornata':'e aggiornate'}`:'Categoria rinominata','success');
+  }
   function del(i){ const c=categorie[i]; if((usi[nk(c.nome)]||0)>0){ if(!window.confirm(`"${c.nome}" è usata in ${usi[nk(c.nome)]} scritture. Eliminarla comunque? Le scritture resteranno senza categoria.`)) return; } setCategorie(categorie.filter((_,j)=>j!==i)); }
 
   const perSez=sez=>categorie.map((c,i)=>({...c,i})).filter(c=>c.sezione===sez);
+  const senzaSez=categorie.map((c,i)=>({...c,i})).filter(c=>!SEZIONI.some(s=>s.v===c.sezione));
   const Blocco=({sez,label})=>(
     <div style={{marginBottom:18}}>
       <div className="card-title serif" style={{fontSize:15,margin:'4px 0 8px'}}>{label}</div>
@@ -3274,7 +3347,12 @@ function PageCategorie({categorie, setCategorie, scritture, toast}){
           {perSez(sez).length===0 && <tr><td colSpan="4" className="empty-state">Nessuna categoria</td></tr>}
           {perSez(sez).map(c=>(
             <tr key={c.i}>
-              <td><input type="text" value={c.nome} onChange={e=>rename(c.i,e.target.value)} style={{minWidth:200}}/></td>
+              <td><input type="text" value={draft[c.i]!=null?draft[c.i]:c.nome}
+                    onChange={e=>{const v=e.target.value; setDraft(d=>({...d,[c.i]:v}));}}
+                    onBlur={()=>renameCommit(c.i)}
+                    onKeyDown={e=>{ if(e.key==='Enter') e.target.blur(); if(e.key==='Escape'){ setDraft(d=>{const n={...d}; delete n[c.i]; return n;}); } }}
+                    title="Modifica il nome e premi Invio: verrà aggiornato anche nelle scritture"
+                    style={{minWidth:200}}/></td>
               <td><select value={c.sezione} onChange={e=>setSez(c.i,e.target.value)}>{SEZIONI.map(s=><option key={s.v} value={s.v}>{s.l}</option>)}</select></td>
               <td className="num">{usi[nk(c.nome)]||0}</td>
               <td><button className="btn danger sm" onClick={()=>del(c.i)}>✕</button></td>
@@ -3300,6 +3378,27 @@ function PageCategorie({categorie, setCategorie, scritture, toast}){
       <Blocco sez="uscita" label="Uscite"/>
       <Blocco sez="investimento" label="Investimenti"/>
       <Blocco sez="interno" label="Interne (escluse dal flusso)"/>
+      {senzaSez.length>0 && <div style={{marginBottom:18}}>
+        <div className="card-title serif" style={{fontSize:15,margin:'4px 0 8px'}}>Senza sezione ({senzaSez.length}) — assegna una sezione per vederle nel rendiconto</div>
+        <div className="tbl-wrap"><table className="tbl">
+          <thead><tr><th>Categoria</th><th>Sezione</th><th className="num">Utilizzi</th><th></th></tr></thead>
+          <tbody>
+            {senzaSez.map(c=>(
+              <tr key={c.i}>
+                <td><input type="text" value={draft[c.i]!=null?draft[c.i]:c.nome}
+                      onChange={e=>{const v=e.target.value; setDraft(d=>({...d,[c.i]:v}));}}
+                      onBlur={()=>renameCommit(c.i)}
+                      onKeyDown={e=>{ if(e.key==='Enter') e.target.blur(); if(e.key==='Escape'){ setDraft(d=>{const n={...d}; delete n[c.i]; return n;}); } }}
+                      style={{minWidth:200}}/></td>
+                <td><select value={c.sezione||''} onChange={e=>setSez(c.i,e.target.value)}><option value="">— scegli —</option>{SEZIONI.map(s=><option key={s.v} value={s.v}>{s.l}</option>)}</select></td>
+                <td className="num">{usi[nk(c.nome)]||0}</td>
+                <td><button className="btn danger sm" onClick={()=>del(c.i)}>✕</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table></div>
+      </div>}
+      <div style={{fontSize:12,color:'var(--ink-3)',marginTop:6,fontStyle:'italic'}}>Per rinominare una categoria modifica il nome e premi Invio (o esci dal campo): il nuovo nome viene applicato automaticamente a tutte le scritture che la usano e alla mappatura dell'import. Esc annulla la modifica.</div>
     </div>
   );
 }
@@ -3396,10 +3495,7 @@ function PageVariazioni({onAddMany, saldi, categorie, toast}){
                         style={{textAlign:'right',color:v===0?undefined:(pos?'var(--success)':'var(--danger)'),fontWeight:v===0?400:600}}/></td>
                   <td><ContoSelect value={r.conto} onChange={val=>setRow(i,'conto',val)} filter={c=>c.categoria==='COSTI'||c.categoria==='RICAVI'||c.categoria==='RICAVI/COSTI'}/></td>
                   <td>
-                    <select value={r.cat} onChange={e=>setRow(i,'cat',e.target.value)}>
-                      <option value="">— nessuna —</option>
-                      {(categorie||[]).filter(c=>v>=0?c.sezione==='entrata':(c.sezione==='uscita'||c.sezione==='investimento')).map(c=><option key={c.nome} value={c.nome}>{c.nome}</option>)}
-                    </select>
+                    <CatSelect value={r.cat} onChange={val=>setRow(i,'cat',val)} categorie={categorie} sezioni={v>=0?['entrata']:['uscita','investimento']}/>
                   </td>
                   <td><button className="btn ghost sm" onClick={()=>delRow(i)}>✕</button></td>
                 </tr>
@@ -3519,13 +3615,13 @@ function App({authUser, onLogout}){
       });
       const ctref=db.ref('conti');
       ctref.on('value',snap=>{ const v=snap.val(); if(v==null){ ctref.set(CONTI); return; } const arr=(Array.isArray(v)?v.filter(Boolean):Object.values(v)); applyConti(arr); setContiState(arr); });
-      db.ref('mappaCategorie').on('value',snap=>setMappaState(snap.val()||{}));
+      db.ref('mappaCategorie').on('value',snap=>{ const m=snap.val()||{}; setMappaCat(m); setMappaState(m); });
       const catref=db.ref('categorieRF');
       catref.on('value',snap=>{ const v=snap.val(); if(v==null){ catref.set(seedCategorie()); return; } setCategorieState(Array.isArray(v)?v.filter(Boolean):Object.values(v)); });
       db.ref('budget').on('value',snap=>setBudgetState(snap.val()||{}));
     } else {
       setScritture(loadScritture()); setCespiti(loadCespiti()); setReady(true);
-      try{ setMappaState(JSON.parse(localStorage.getItem('contabilita_mappa_v1')||'{}')); }catch(e){}
+      try{ const m=JSON.parse(localStorage.getItem('contabilita_mappa_v1')||'{}'); setMappaCat(m); setMappaState(m); }catch(e){}
       try{ const c=JSON.parse(localStorage.getItem('contabilita_cat_v1')||'null'); if(c) setCategorieState(c); }catch(e){}
       try{ setBudgetState(JSON.parse(localStorage.getItem('contabilita_budget_v1')||'{}')); }catch(e){}
     }
@@ -3554,12 +3650,24 @@ function App({authUser, onLogout}){
     if(firebaseReady){ const up={}; ids.forEach(id=>{ up['scritture/'+id]=null; }); db.ref().update(up); }
     else setScritture(arr=>{ const n=arr.filter(s=>!set.has(s.id)); saveScritture(n); return n; });
   };
+  const updateScritture = updates => {
+    if(!updates||!updates.length) return;
+    if(firebaseReady){
+      const up={};
+      updates.forEach(({id,patch})=>{ const cur=scritture.find(s=>s.id===id)||{}; const {id:_,...rest}={...cur,...patch}; up['scritture/'+id]=rest; });
+      db.ref().update(up);
+    } else setScritture(arr=>{
+      const m=new Map(updates.map(u=>[u.id,u.patch]));
+      const n=arr.map(s=>m.has(s.id)?{...s,...m.get(s.id)}:s); saveScritture(n); return n;
+    });
+  };
   const addScritture = list => {
     if(!list||!list.length) return;
     if(firebaseReady){ const up={}; list.forEach(s=>{ const {id,...rest}=s; up['scritture/'+id]=rest; }); db.ref().update(up); }
     else setScritture(arr=>{ const n=[...arr,...list]; saveScritture(n); return n; });
   };
   const setMappa = m => {
+    setMappaCat(m);
     setMappaState(m);
     if(firebaseReady){ db.ref('mappaCategorie').set(m); }
     else { try{ localStorage.setItem('contabilita_mappa_v1', JSON.stringify(m)); }catch(e){} }
@@ -3637,12 +3745,12 @@ function App({authUser, onLogout}){
           {page==='movimenti' && <PageMovimenti scritture={scritture} saldi={saldi}/>}
           {page==='pivot' && <PagePivotConti saldi={saldi}/>}
           {page==='bilancio' && <PageBilancio saldi={saldi}/>}
-          {page==='rendiconto' && <PageRendiconto scritture={scritture} categorie={categorie}/>}
+          {page==='rendiconto' && <PageRendiconto scritture={scritture} categorie={categorie} updateScritture={updateScritture} toast={showToast}/>}
           {page==='controller' && <PageController scritture={scritture} categorie={categorie} budget={budget} setBudget={setBudget}/>}
           {page==='pianoconti' && <PagePianoConti saldi={saldi} conti={conti} setConti={setConti} toast={showToast}/>}
           {page==='cespiti' && <PageCespiti cespiti={cespiti} setCespiti={updateCespiti} toast={showToast}/>}
           {page==='ammortamenti' && <PageAmmortamenti cespiti={cespiti} onAdd={addScrittura} updateCespiti={updateCespiti} toast={showToast}/>}
-          {page==='categorie' && <PageCategorie categorie={categorie} setCategorie={setCategorie} scritture={scritture} toast={showToast}/>}
+          {page==='categorie' && <PageCategorie categorie={categorie} setCategorie={setCategorie} scritture={scritture} updateScritture={updateScritture} mappa={mappa} setMappa={setMappa} toast={showToast}/>}
           {page==='export' && <PageExport scritture={scritture} cespiti={cespiti} saldi={saldi} categorie={categorie} toast={showToast}/>}
         </div>
       </div>
