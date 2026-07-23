@@ -3293,6 +3293,274 @@ function PageImport({onAddMany, mappa, setMappa, categorie, setCategorie, toast}
 /* ============================================================
    PAGINA: CONTROLLER (contabilità analitica)
    ============================================================ */
+/* ============ BUDGET (scenari, voci agganciate ai conti, consuntivo da partita doppia) ============ */
+const NATURE = [
+  {v:'ricavo', l:'Ricavo'},
+  {v:'costo', l:'Costo'},
+  {v:'patrimoniale', l:'Patrimoniale / Finanziario'},
+];
+function contiPerNatura(nat){
+  return CONTI.filter(c=>{
+    if(nat==='ricavo') return c.categoria==='RICAVI'||c.categoria==='RICAVI/COSTI';
+    if(nat==='costo') return c.categoria==='COSTI'||c.categoria==='RICAVI/COSTI';
+    return c.prospetto!=='CE';   // patrimoniale: conti di stato patrimoniale
+  }).sort((a,b)=>a.nome.localeCompare(b.nome,'it'));
+}
+const isApertura = s => /apertur/i.test(s.descr||'');
+
+/* saldo di un conto: economiche nel periodo, patrimoniali sempre a saldo pieno */
+function movConto(scritture, cod, natura, da, a){
+  let dare=0, avere=0;
+  (scritture||[]).forEach(s=>{
+    const eco = natura!=='patrimoniale';
+    if(eco){
+      if(isApertura(s)) return;
+      const d=s.data||'';
+      if(da && d<da) return;
+      if(a && d>a) return;
+    }
+    (s.righe||[]).forEach(r=>{ if(r.c===cod){ dare+=(r.d||0); avere+=(r.a||0); } });
+  });
+  return natura==='ricavo' ? r2(avere-dare) : r2(dare-avere);
+}
+
+function BudgetVoceModal({voce, onSave, onClose}){
+  const [d,setD]=useState(()=>({...voce}));
+  const disponibili=contiPerNatura(d.natura);
+  const toggleConto=cod=>setD(v=>({...v, conti:(v.conti||[]).includes(cod)?v.conti.filter(x=>x!==cod):[...(v.conti||[]),cod]}));
+  return (
+    <div className="modal-bg" onClick={e=>{if(e.target.className==='modal-bg')onClose();}}>
+      <div className="modal" style={{maxWidth:640}}>
+        <div className="modal-head"><h3>{voce.nuova?'Nuova voce di budget':'Modifica voce'}</h3><button className="btn ghost sm" onClick={onClose}>✕</button></div>
+        <div className="modal-body">
+          <div className="form-row"><label>Descrizione <span className="req">*</span></label>
+            <input type="text" value={d.descr} onChange={e=>setD(v=>({...v,descr:e.target.value}))} placeholder="es. Stipendi PwC"/></div>
+          <div className="form-row"><label>Natura</label>
+            <select value={d.natura} onChange={e=>setD(v=>({...v,natura:e.target.value,conti:[]}))}>{NATURE.map(n=><option key={n.v} value={n.v}>{n.l}</option>)}</select></div>
+          <div className="form-row"><label>Importo di budget €</label>
+            <input type="number" step="0.01" value={d.importo} onChange={e=>setD(v=>({...v,importo:e.target.value}))} placeholder="0,00"/></div>
+          <div className="form-row"><label>Note</label>
+            <input type="text" value={d.note||''} onChange={e=>setD(v=>({...v,note:e.target.value}))} placeholder="facoltative"/></div>
+          <div className="form-row"><label>Conti collegati ({(d.conti||[]).length})</label>
+            <div style={{maxHeight:210,overflowY:'auto',border:'1px solid var(--rule)',borderRadius:6,padding:'6px 10px'}}>
+              {disponibili.length===0 && <div style={{fontSize:12,color:'var(--ink-3)',padding:'6px 0'}}>Nessun conto disponibile per questa natura</div>}
+              {disponibili.map(c=>(
+                <label key={c.codice} style={{display:'flex',alignItems:'center',gap:8,fontSize:12.5,padding:'3px 0',cursor:'pointer'}}>
+                  <input type="checkbox" checked={(d.conti||[]).includes(c.codice)} onChange={()=>toggleConto(c.codice)}/>
+                  <span className="mono" style={{color:'var(--ink-3)',minWidth:26}}>{c.codice}</span>{c.nome}
+                </label>
+              ))}
+            </div>
+            <div style={{fontSize:11.5,color:'var(--ink-3)',marginTop:6}}>Il consuntivo della voce è la somma dei movimenti su questi conti, presi dal libro giornale.</div>
+          </div>
+          <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:14,paddingTop:14,borderTop:'1px solid var(--rule)'}}>
+            <button className="btn ghost" onClick={onClose}>Annulla</button>
+            <button className="btn accent" onClick={()=>{ if(!d.descr.trim()){alert('Inserisci una descrizione');return;} onSave({...d,descr:d.descr.trim(),importo:parseFloat(d.importo)||0}); }}>Salva voce</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PageBudget({scritture, budgets, setBudgets, toast}){
+  const ids=Object.keys(budgets||{});
+  const [sel,setSel]=useState(ids[0]||'');
+  const [editing,setEditing]=useState(null);
+  const [mostraCons,setMostraCons]=useState(true);
+  const [sommaCons,setSommaCons]=useState(false);
+  const [statoConti,setStatoConti]=useState(false);
+  useEffect(()=>{ const k=Object.keys(budgets||{}); if(!k.includes(sel)) setSel(k[0]||''); },[budgets]);
+
+  const b = sel ? budgets[sel] : null;
+  const upd = patch => setBudgets({...budgets,[sel]:{...b,...patch}});
+
+  function nuovo(){
+    const nome=window.prompt('Nome del budget / scenario:','Budget '+new Date().getFullYear());
+    if(!nome) return;
+    const id=uid();
+    setBudgets({...budgets,[id]:{id,nome:nome.trim(),da:'',a:'',voci:[]}});
+    setSel(id); toast('Budget creato','success');
+  }
+  function duplica(){
+    if(!b) return;
+    const nome=window.prompt('Nome della copia:',b.nome+' (copia)');
+    if(!nome) return;
+    const id=uid();
+    setBudgets({...budgets,[id]:{...b,id,nome:nome.trim(),voci:(b.voci||[]).map(v=>({...v,id:uid()}))}});
+    setSel(id); toast('Scenario duplicato','success');
+  }
+  function elimina(){
+    if(!b) return;
+    if(!window.confirm(`Eliminare il budget "${b.nome}"?`)) return;
+    const n={...budgets}; delete n[sel]; setBudgets(n); toast('Budget eliminato','success');
+  }
+  function salvaVoce(v){
+    const voci=[...(b.voci||[])];
+    const i=voci.findIndex(x=>x.id===v.id);
+    const {nuova,...clean}=v;
+    if(i>=0) voci[i]=clean; else voci.push(clean);
+    upd({voci}); setEditing(null);
+  }
+  function eliminaVoce(id){ if(!window.confirm('Eliminare questa voce?')) return; upd({voci:(b.voci||[]).filter(v=>v.id!==id)}); }
+
+  /* ---- calcolo consuntivo: attribuzione singola per conto (niente doppi conteggi) ---- */
+  const calc = useMemo(()=>{
+    if(!b) return {righe:[],tot:{}};
+    const usati=new Set();
+    const righe=(b.voci||[]).map(v=>{
+      const propri=(v.conti||[]).filter(c=>!usati.has(c));
+      propri.forEach(c=>usati.add(c));
+      const cons=r2(propri.reduce((s,c)=>s+movConto(scritture,c,v.natura,b.da,b.a),0));
+      const budg=sommaCons ? r2((parseFloat(v.importo)||0)+cons) : r2(parseFloat(v.importo)||0);
+      const dupl=(v.conti||[]).length-propri.length;
+      return {...v, cons, budg, scost:r2(cons-budg), dupl};
+    });
+    const somma=(nat,f)=>r2(righe.filter(r=>r.natura===nat).reduce((s,r)=>s+f(r),0));
+    const tot={
+      ricBudg:somma('ricavo',r=>r.budg), ricCons:somma('ricavo',r=>r.cons),
+      cosBudg:somma('costo',r=>r.budg), cosCons:somma('costo',r=>r.cons),
+      patBudg:somma('patrimoniale',r=>r.budg), patCons:somma('patrimoniale',r=>r.cons),
+    };
+    tot.resBudg=r2(tot.ricBudg-tot.cosBudg); tot.resCons=r2(tot.ricCons-tot.cosCons);
+    tot.scost=r2(tot.resCons-tot.resBudg);
+    return {righe,tot};
+  },[b,scritture,sommaCons]);
+
+  function exportXls(){
+    if(!window.XLSX){ toast('Libreria Excel non caricata','error'); return; }
+    const head=['Voce','Natura','Conti','Budget','Consuntivo','Scostamento','Note'];
+    const aoa=[[b.nome],[b.da||b.a?`Periodo ${b.da||'inizio'} → ${b.a||'oggi'}`:'Periodo: tutto'],[],head];
+    NATURE.forEach(n=>{
+      const rr=calc.righe.filter(r=>r.natura===n.v); if(!rr.length) return;
+      aoa.push([n.l.toUpperCase()]);
+      rr.forEach(r=>aoa.push([r.descr,n.l,(r.conti||[]).map(c=>contoByCode[c]?.nome||c).join(', '),r.budg,r.cons,r.scost,r.note||'']));
+    });
+    aoa.push([]);
+    aoa.push(['TOTALE RICAVI','','',calc.tot.ricBudg,calc.tot.ricCons,r2(calc.tot.ricCons-calc.tot.ricBudg),'']);
+    aoa.push(['TOTALE COSTI','','',calc.tot.cosBudg,calc.tot.cosCons,r2(calc.tot.cosCons-calc.tot.cosBudg),'']);
+    aoa.push(['RISULTATO','','',calc.tot.resBudg,calc.tot.resCons,calc.tot.scost,'']);
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(aoa),'Budget');
+    XLSX.writeFile(wb,'Budget_'+(b.nome||'').replace(/[^\w]+/g,'_')+'.xlsx');
+  }
+
+  const Riga=({r})=>{
+    const favorevole = r.natura==='ricavo' ? r.scost>=0 : r.scost<=0;
+    return (
+      <tr>
+        <td><b>{r.descr}</b>{r.dupl>0 && <span className="pill" style={{marginLeft:6,background:'#f7ecd2',color:'#7a5a1d'}} title="Alcuni conti sono già attribuiti a una voce precedente">{r.dupl} conto già usato</span>}</td>
+        <td style={{fontSize:12,color:'var(--ink-3)'}}>{(r.conti||[]).map(c=>contoByCode[c]?.nome||('#'+c)).join(' · ')||'—'}</td>
+        <td className="num">{num2(r.budg)}</td>
+        {mostraCons && <td className="num">{num2(r.cons)}</td>}
+        {mostraCons && <td className={'num '+(favorevole?'pos':'neg')}>{r.scost>0?'+':''}{num2(r.scost)}</td>}
+        <td style={{fontSize:12,color:'var(--ink-3)'}}>{r.note||''}</td>
+        <td style={{whiteSpace:'nowrap'}}>
+          <button className="btn ghost sm" onClick={()=>setEditing({...r,nuova:false})}>✎</button>{' '}
+          <button className="btn danger sm" onClick={()=>eliminaVoce(r.id)}>✕</button>
+        </td>
+      </tr>
+    );
+  };
+  const nCol = mostraCons?7:5;
+
+  return (
+    <div>
+      <PageHead title="Budget" sub="Scenari di budget confrontati con il consuntivo di partita doppia">
+        <button className="btn ghost" onClick={nuovo}>+ Nuovo budget</button>
+        {b && <button className="btn ghost" onClick={duplica}>⧉ Duplica</button>}
+        {b && <button className="btn ghost" onClick={exportXls}>↓ Excel</button>}
+      </PageHead>
+
+      {ids.length===0 ? <div className="card"><div className="empty-state">Nessun budget. Creane uno con “+ Nuovo budget”.</div></div> : <>
+        <div className="filters">
+          <span className="label">Budget</span>
+          <select value={sel} onChange={e=>setSel(e.target.value)}>{ids.map(k=><option key={k} value={k}>{budgets[k].nome}</option>)}</select>
+          <span className="label">Dal</span>
+          <input type="date" value={b?.da||''} onChange={e=>upd({da:e.target.value})}/>
+          <span className="label">Al</span>
+          <input type="date" value={b?.a||''} onChange={e=>upd({a:e.target.value})}/>
+          <div style={{flex:1}}></div>
+          <button className="btn danger sm" onClick={elimina}>Elimina budget</button>
+        </div>
+
+        <div className="card" style={{marginBottom:16,display:'flex',gap:18,flexWrap:'wrap',alignItems:'center'}}>
+          <label style={{display:'flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
+            <input type="checkbox" checked={mostraCons} onChange={e=>setMostraCons(e.target.checked)}/> Confronto consuntivo
+          </label>
+          <label style={{display:'flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
+            <input type="checkbox" checked={sommaCons} onChange={e=>setSommaCons(e.target.checked)}/> Somma consuntivo al budget
+          </label>
+          <span style={{fontSize:11.5,color:'var(--ink-3)'}}>Con la somma attiva, l’importo che inserisci si aggiunge a quanto già registrato (forecast).</span>
+          <div style={{flex:1}}></div>
+          <button className="btn ghost sm" onClick={()=>setStatoConti(v=>!v)}>{statoConti?'Nascondi':'Mostra'} stato conti</button>
+        </div>
+
+        <div className="kpi-grid" style={{marginBottom:18}}>
+          <Kpi label="Ricavi" value={eur(calc.tot.ricBudg)} hint={mostraCons?`Consuntivo ${eur(calc.tot.ricCons)}`:null}/>
+          <Kpi label="Costi" value={eur(calc.tot.cosBudg)} hint={mostraCons?`Consuntivo ${eur(calc.tot.cosCons)}`:null}/>
+          <Kpi label="Risultato" value={eur(calc.tot.resBudg)} neg={calc.tot.resBudg<0} hint={mostraCons?`Consuntivo ${eur(calc.tot.resCons)}`:null} accent/>
+          {mostraCons && <Kpi label="Scostamento risultato" value={(calc.tot.scost>0?'+':'')+eur(calc.tot.scost)} neg={calc.tot.scost<0}/>}
+        </div>
+
+        {statoConti && <div className="card" style={{marginBottom:18}}>
+          <div className="card-title">Stato dei conti nel periodo</div>
+          <div className="tbl-wrap" style={{maxHeight:280,overflowY:'auto'}}>
+            <table className="tbl">
+              <thead><tr><th>Conto</th><th>Categoria</th><th className="num">Saldo</th></tr></thead>
+              <tbody>
+                {CONTI.map(c=>({c,v:movConto(scritture,c.codice,c.categoria==='RICAVI'?'ricavo':(c.prospetto==='CE'?'costo':'patrimoniale'),b?.da,b?.a)}))
+                  .filter(x=>x.v!==0)
+                  .sort((x,y)=>Math.abs(y.v)-Math.abs(x.v))
+                  .map(({c,v})=><tr key={c.codice}><td><b>{c.nome}</b></td><td style={{fontSize:12}}>{c.categoria}</td><td className={'num '+(v<0?'neg':'')}>{num2(v)}</td></tr>)}
+              </tbody>
+            </table>
+          </div>
+        </div>}
+
+        <div className="tbl-wrap">
+          <table className="tbl">
+            <thead><tr>
+              <th>Voce</th><th>Conti collegati</th><th className="num">{sommaCons?'Forecast':'Budget'}</th>
+              {mostraCons && <th className="num">Consuntivo</th>}
+              {mostraCons && <th className="num">Scostamento</th>}
+              <th>Note</th><th style={{width:80}}></th>
+            </tr></thead>
+            <tbody>
+              {(b.voci||[]).length===0 && <tr><td colSpan={nCol} className="empty-state">Nessuna voce. Aggiungine una qui sotto.</td></tr>}
+              {NATURE.map(n=>{
+                const rr=calc.righe.filter(r=>r.natura===n.v);
+                if(!rr.length) return null;
+                const tb=r2(rr.reduce((s,r)=>s+r.budg,0)), tc=r2(rr.reduce((s,r)=>s+r.cons,0));
+                return (
+                  <React.Fragment key={n.v}>
+                    <tr className="gj-head"><td colSpan={nCol} style={{fontWeight:600}}>{n.l}</td></tr>
+                    {rr.map(r=><Riga key={r.id} r={r}/>)}
+                    <tr className="rf-tot"><td colSpan={2} style={{fontWeight:600}}>Totale {n.l.toLowerCase()}</td>
+                      <td className="num" style={{fontWeight:600}}>{num2(tb)}</td>
+                      {mostraCons && <td className="num" style={{fontWeight:600}}>{num2(tc)}</td>}
+                      {mostraCons && <td className="num" style={{fontWeight:600}}>{num2(r2(tc-tb))}</td>}
+                      <td colSpan={2}></td></tr>
+                  </React.Fragment>
+                );
+              })}
+              <tr className="rf-tot strong"><td colSpan={2} style={{fontWeight:700}}>RISULTATO (ricavi − costi)</td>
+                <td className="num" style={{fontWeight:700}}>{num2(calc.tot.resBudg)}</td>
+                {mostraCons && <td className="num" style={{fontWeight:700}}>{num2(calc.tot.resCons)}</td>}
+                {mostraCons && <td className={'num '+(calc.tot.scost<0?'neg':'pos')} style={{fontWeight:700}}>{calc.tot.scost>0?'+':''}{num2(calc.tot.scost)}</td>}
+                <td colSpan={2}></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <button className="btn accent" style={{marginTop:14}} onClick={()=>setEditing({id:uid(),descr:'',natura:'costo',conti:[],importo:'',note:'',nuova:true})}>+ Aggiungi voce</button>
+        <div style={{fontSize:12,color:'var(--ink-3)',marginTop:10,fontStyle:'italic'}}>Il consuntivo è calcolato dal libro giornale sui conti collegati a ogni voce (avere−dare per i ricavi, dare−avere per costi e patrimoniali). Se lo stesso conto compare in più voci, viene attribuito solo alla prima per evitare doppi conteggi. I conti patrimoniali usano sempre il saldo pieno, non solo il periodo.</div>
+      </>}
+
+      {editing && <BudgetVoceModal voce={editing} onSave={salvaVoce} onClose={()=>setEditing(null)}/>}
+    </div>
+  );
+}
+
 function PageController({scritture, categorie, budget, setBudget}){
   const [tab,setTab]=useState('budget');
   const rf=useMemo(()=>buildRendiconto(scritture,categorie),[scritture,categorie]);
@@ -3680,6 +3948,7 @@ const NAV = [
     {id:'bilancio',ico:'⚖',label:'Bilancio di Verifica'},
     {id:'rendiconto',ico:'~',label:'Rendiconto Finanz.'},
     {id:'controller',ico:'◎',label:'Controller'},
+    {id:'budget',ico:'◑',label:'Budget'},
   ]},
   {sec:'Anagrafiche',items:[
     {id:'pianoconti',ico:'#',label:'Piano dei Conti'},
@@ -3706,6 +3975,7 @@ function App({authUser, onLogout}){
   const [mappa,setMappaState]=useState({});
   const [categorie,setCategorieState]=useState(()=>{ const c=seedCategorie(); setCatNames(c); return c; });
   const [budget,setBudgetState]=useState({});
+  const [budgets,setBudgetsState]=useState({});
   const [ready,setReady]=useState(false);
   const [page,setPage]=useState('dashboard');
   const [menuOpen,setMenuOpen]=useState(false);
@@ -3735,11 +4005,13 @@ function App({authUser, onLogout}){
       const catref=db.ref('categorieRF');
       catref.on('value',snap=>{ const v=snap.val(); if(v==null){ catref.set(seedCategorie()); return; } const arr=Array.isArray(v)?v.filter(Boolean):Object.values(v); setCatNames(arr); setCategorieState(arr); });
       db.ref('budget').on('value',snap=>setBudgetState(snap.val()||{}));
+      db.ref('budgets').on('value',snap=>setBudgetsState(snap.val()||{}));
     } else {
       setScritture(loadScritture()); setCespiti(loadCespiti()); setReady(true);
       try{ const m=JSON.parse(localStorage.getItem('contabilita_mappa_v1')||'{}'); setMappaCat(m); setMappaState(m); }catch(e){}
       try{ const c=JSON.parse(localStorage.getItem('contabilita_cat_v1')||'null'); if(c){ setCatNames(c); setCategorieState(c); } }catch(e){}
       try{ setBudgetState(JSON.parse(localStorage.getItem('contabilita_budget_v1')||'{}')); }catch(e){}
+      try{ setBudgetsState(JSON.parse(localStorage.getItem('contabilita_budgets_v1')||'{}')); }catch(e){}
     }
   },[]);
 
@@ -3799,6 +4071,11 @@ function App({authUser, onLogout}){
     setCategorieState(list);
     if(firebaseReady){ db.ref('categorieRF').set(list); }
     else { try{ localStorage.setItem('contabilita_cat_v1', JSON.stringify(list)); }catch(e){} }
+  };
+  const setBudgets = obj => {
+    setBudgetsState(obj);
+    if(firebaseReady){ db.ref('budgets').set(obj); }
+    else { try{ localStorage.setItem('contabilita_budgets_v1',JSON.stringify(obj)); }catch(e){} }
   };
   const setBudget = obj => {
     setBudgetState(obj);
@@ -3864,6 +4141,7 @@ function App({authUser, onLogout}){
           {page==='bilancio' && <PageBilancio saldi={saldi}/>}
           {page==='rendiconto' && <PageRendiconto scritture={scritture} categorie={categorie} updateScritture={updateScritture} toast={showToast}/>}
           {page==='controller' && <PageController scritture={scritture} categorie={categorie} budget={budget} setBudget={setBudget}/>}
+          {page==='budget' && <PageBudget scritture={scritture} budgets={budgets} setBudgets={setBudgets} toast={showToast}/>}
           {page==='pianoconti' && <PagePianoConti saldi={saldi} conti={conti} setConti={setConti} toast={showToast}/>}
           {page==='cespiti' && <PageCespiti cespiti={cespiti} setCespiti={updateCespiti} toast={showToast}/>}
           {page==='ammortamenti' && <PageAmmortamenti cespiti={cespiti} onAdd={addScrittura} updateCespiti={updateCespiti} toast={showToast}/>}
