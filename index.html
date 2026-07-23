@@ -1173,6 +1173,39 @@ function DrillRendiconto({sezKey, sezLabel, catNome, scritture, categorie, updat
   );
 }
 
+/* Pop-up composizione delle disponibilità iniziali (per conto liquido) */
+function DispIniBreakdown({onClose}){
+  const righe=LIQ_CODES.map(cod=>({cod,nome:contoByCode[cod]?.nome||('#'+cod),importo:r2(SALDI_INIZIALI[cod]||0)}))
+    .filter(r=>r.importo!==0)
+    .sort((a,b)=>b.importo-a.importo);
+  const tot=r2(righe.reduce((s,r)=>s+r.importo,0));
+  return (
+    <div className="modal-bg" onClick={e=>{if(e.target.className==='modal-bg')onClose();}}>
+      <div className="modal" style={{maxWidth:520}}>
+        <div className="modal-head">
+          <h3>Disponibilità iniziali — composizione</h3>
+          <button className="btn ghost sm" onClick={onClose}>✕</button>
+        </div>
+        <div className="modal-body" style={{paddingTop:0}}>
+          <div style={{fontSize:12.5,color:'var(--ink-3)',margin:'4px 0 12px'}}>Saldi di apertura dei conti di liquidità, da cui parte il rendiconto.</div>
+          <div className="tbl-wrap">
+            <table className="tbl">
+              <thead><tr><th>Conto</th><th className="num">Saldo iniziale</th></tr></thead>
+              <tbody>
+                {righe.length===0 && <tr><td colSpan="2" className="empty-state">Nessun saldo iniziale impostato</td></tr>}
+                {righe.map(r=>(
+                  <tr key={r.cod}><td><b>{r.nome}</b></td><td className={'num '+(r.importo<0?'neg':'')}>{num2(r.importo)}</td></tr>
+                ))}
+              </tbody>
+              <tfoot><tr><td style={{fontWeight:700}}>Totale</td><td className={'num '+(tot<0?'neg':'')} style={{fontWeight:700}}>{num2(tot)}</td></tr></tfoot>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PageDashboard({scritture, saldi, goto}){
   const [drill,setDrill]=useState(null);
   const liq = LIQ_CODES.map(cod=>{
@@ -2036,6 +2069,7 @@ function PageRendiconto({scritture, categorie, updateScritture, toast}){
   const [soloMacro,setSoloMacro]=useState(false);
   const [collapsed,setCollapsed]=useState({entrata:false,uscita:false,investimento:false});
   const [drill,setDrill]=useState(null);
+  const [dispModal,setDispModal]=useState(false);
   const toggle=k=>setCollapsed(c=>({...c,[k]:!c[k]}));
   const isCollapsed=k=> soloMacro || collapsed[k];
   const rf=useMemo(()=>buildRendiconto(scritture,categorie),[scritture,categorie]);
@@ -2059,7 +2093,7 @@ function PageRendiconto({scritture, categorie, updateScritture, toast}){
         <table className={'tbl rf-matrix'+(vista==='totali'?' rf-fit':'')}>
           <thead><tr><th className="rf-voce">Voce</th>{cols.map(k=><th key={k} className="num">{rfMonthLabel(k)}</th>)}<th className="num">Totale</th></tr></thead>
           <tbody>
-            <tr className="rf-tot"><td className="rf-voce">Disponibilità iniziali</td>{cols.map(k=><Cell key={k} v={rf.dispIni[k]}/>)}<Cell v={rf.colTot.dispIni}/></tr>
+            <tr className="rf-tot rf-click" onClick={()=>setDispModal(true)} style={{cursor:'pointer'}} title="Vedi la composizione per conto"><td className="rf-voce">Disponibilità iniziali ⓘ</td>{cols.map(k=><Cell key={k} v={rf.dispIni[k]}/>)}<Cell v={rf.colTot.dispIni}/></tr>
             {sezioni.map(sez=>{
               const rows=rf.rows[sez.key]; if(sez.key==='investimento'&&rows.length===0) return null;
               return (
@@ -2088,6 +2122,7 @@ function PageRendiconto({scritture, categorie, updateScritture, toast}){
         Costruito dalle scritture che movimentano la liquidità, raggruppate per categoria. La sezione di ogni categoria (entrata / uscita / investimento / interno) si imposta in “Categorie”. Apertura e giroconti sono esclusi dal flusso. Tocca una riga di dettaglio per vedere i movimenti che la compongono.
       </div>
       {drill && <DrillRendiconto sezKey={drill.sezKey} sezLabel={drill.sezLabel} catNome={drill.catNome} scritture={scritture} categorie={categorie} updateScritture={updateScritture} toast={toast} onClose={()=>setDrill(null)}/>}
+      {dispModal && <DispIniBreakdown onClose={()=>setDispModal(false)}/>}
     </div>
   );
 }
