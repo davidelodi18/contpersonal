@@ -3363,10 +3363,84 @@ function BudgetVoceModal({voce, onSave, onClose}){
   );
 }
 
+function naturaConto(c){
+  if(!c) return 'patrimoniale';
+  if(c.categoria==='RICAVI') return 'ricavo';
+  if(c.categoria==='COSTI') return 'costo';
+  if(c.categoria==='RICAVI/COSTI') return 'ricavo';
+  return 'patrimoniale';
+}
+
+/* Modale creazione budget: nome, periodo e scelta dei conti da includere.
+   I conti di liquidità sono inclusi di default e non deselezionabili. */
+function NewBudgetModal({onCreate, onClose}){
+  const [nome,setNome]=useState('Budget '+new Date().getFullYear());
+  const [da,setDa]=useState('');
+  const [a,setA]=useState('');
+  const [q,setQ]=useState('');
+  const liq=new Set(LIQ_CODES);
+  const [sel,setSel]=useState(()=>new Set(LIQ_CODES));
+  const toggle=cod=>{ if(liq.has(cod)) return; setSel(p=>{const n=new Set(p); n.has(cod)?n.delete(cod):n.add(cod); return n;}); };
+  const filtered=CONTI.filter(c=>!q||c.nome.toLowerCase().includes(q.toLowerCase())||String(c.codice)===q);
+  const groups={};
+  filtered.forEach(c=>{ (groups[c.categoria||'—']=groups[c.categoria||'—']||[]).push(c); });
+  const selNonLiq=[...sel].filter(c=>!liq.has(c)).length;
+  const tuttiFiltrati=()=>setSel(p=>{ const n=new Set(p); filtered.forEach(c=>n.add(c.codice)); return n; });
+  const soloLiquidita=()=>setSel(new Set(LIQ_CODES));
+  function crea(){
+    if(!nome.trim()){ alert('Inserisci un nome'); return; }
+    const voci=CONTI.filter(c=>sel.has(c.codice)).map(c=>({id:uid(),descr:c.nome,natura:naturaConto(c),conti:[c.codice],importo:'',note:''}));
+    onCreate({nome:nome.trim(),da,a,voci});
+  }
+  return (
+    <div className="modal-bg" onClick={e=>{if(e.target.className==='modal-bg')onClose();}}>
+      <div className="modal" style={{maxWidth:660}}>
+        <div className="modal-head"><h3>Nuovo budget / forecast</h3><button className="btn ghost sm" onClick={onClose}>✕</button></div>
+        <div className="modal-body">
+          <div style={{display:'flex',gap:12,flexWrap:'wrap'}}>
+            <div className="form-row" style={{flex:1,minWidth:200}}><label>Nome <span className="req">*</span></label>
+              <input type="text" value={nome} onChange={e=>setNome(e.target.value)} placeholder="es. Forecast 2026"/></div>
+            <div className="form-row" style={{maxWidth:150}}><label>Dal</label><input type="date" value={da} onChange={e=>setDa(e.target.value)}/></div>
+            <div className="form-row" style={{maxWidth:150}}><label>Al</label><input type="date" value={a} onChange={e=>setA(e.target.value)}/></div>
+          </div>
+          <div className="form-row"><label>Conti da includere — {selNonLiq} + {liq.size} di liquidità</label>
+            <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:8,flexWrap:'wrap'}}>
+              <input type="text" placeholder="Cerca conto…" value={q} onChange={e=>setQ(e.target.value)} style={{flex:1,minWidth:160}}/>
+              <button className="btn ghost sm" onClick={tuttiFiltrati}>Seleziona tutti</button>
+              <button className="btn ghost sm" onClick={soloLiquidita}>Solo liquidità</button>
+            </div>
+            <div style={{maxHeight:280,overflowY:'auto',border:'1px solid var(--rule)',borderRadius:6,padding:'6px 10px'}}>
+              {Object.keys(groups).length===0 && <div style={{fontSize:12,color:'var(--ink-3)',padding:'6px 0'}}>Nessun conto</div>}
+              {Object.entries(groups).map(([cat,items])=>(
+                <div key={cat} style={{marginBottom:8}}>
+                  <div style={{fontSize:10.5,textTransform:'uppercase',letterSpacing:'.06em',color:'var(--ink-3)',margin:'6px 0 3px'}}>{cat}</div>
+                  {items.map(c=>{ const isLiq=liq.has(c.codice); return (
+                    <label key={c.codice} style={{display:'flex',alignItems:'center',gap:8,fontSize:12.5,padding:'3px 0',cursor:isLiq?'default':'pointer',opacity:isLiq?0.85:1}}>
+                      <input type="checkbox" checked={sel.has(c.codice)} disabled={isLiq} onChange={()=>toggle(c.codice)}/>
+                      <span className="mono" style={{color:'var(--ink-3)',minWidth:26}}>{c.codice}</span>{c.nome}
+                      {isLiq && <span className="pill" style={{marginLeft:'auto',background:'var(--accent-soft)',color:'var(--accent-ink)'}}>sempre incluso</span>}
+                    </label>
+                  ); })}
+                </div>
+              ))}
+            </div>
+            <div style={{fontSize:11.5,color:'var(--ink-3)',marginTop:6}}>Per ogni conto scelto viene creata una voce (natura dedotta dal conto, importo da compilare). Potrai aggiungerne o toglierne anche dopo.</div>
+          </div>
+          <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:14,paddingTop:14,borderTop:'1px solid var(--rule)'}}>
+            <button className="btn ghost" onClick={onClose}>Annulla</button>
+            <button className="btn accent" onClick={crea}>Crea budget</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PageBudget({scritture, budgets, setBudgets, toast}){
   const ids=Object.keys(budgets||{});
   const [sel,setSel]=useState(ids[0]||'');
   const [editing,setEditing]=useState(null);
+  const [creating,setCreating]=useState(false);
   const [mostraCons,setMostraCons]=useState(true);
   const [sommaCons,setSommaCons]=useState(false);
   const [statoConti,setStatoConti]=useState(false);
@@ -3375,12 +3449,11 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
   const b = sel ? budgets[sel] : null;
   const upd = patch => setBudgets({...budgets,[sel]:{...b,...patch}});
 
-  function nuovo(){
-    const nome=window.prompt('Nome del budget / scenario:','Budget '+new Date().getFullYear());
-    if(!nome) return;
+  function nuovo(){ setCreating(true); }
+  function creaBudget(dati){
     const id=uid();
-    setBudgets({...budgets,[id]:{id,nome:nome.trim(),da:'',a:'',voci:[]}});
-    setSel(id); toast('Budget creato','success');
+    setBudgets({...budgets,[id]:{id,...dati}});
+    setSel(id); setCreating(false); toast('Budget creato','success');
   }
   function duplica(){
     if(!b) return;
@@ -3557,6 +3630,7 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
       </>}
 
       {editing && <BudgetVoceModal voce={editing} onSave={salvaVoce} onClose={()=>setEditing(null)}/>}
+      {creating && <NewBudgetModal onCreate={creaBudget} onClose={()=>setCreating(false)}/>}
     </div>
   );
 }
