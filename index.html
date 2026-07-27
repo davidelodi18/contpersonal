@@ -3422,6 +3422,7 @@ function NewBudgetModal({scritture, onCreate, onClose}){
             </div>
             <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:8,flexWrap:'wrap'}}>
               <input type="text" placeholder="Cerca conto…" value={q} onChange={e=>setQ(e.target.value)} style={{flex:1,minWidth:160}}/>
+              <button className="btn ghost sm" onClick={()=>setSel(new Set(CONTI.map(c=>c.codice)))}>Seleziona tutti</button>
               <button className="btn ghost sm" onClick={tuttiFiltrati}>Seleziona visibili</button>
               <button className="btn ghost sm" onClick={nessunoFiltrati}>Deseleziona visibili</button>
               <button className="btn ghost sm" onClick={soloLiquidita}>Solo liquidità</button>
