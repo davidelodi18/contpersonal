@@ -3565,6 +3565,30 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
       </PageHead>
 
       {ids.length===0 ? <div className="card"><div className="empty-state">Nessun budget. Creane uno con “+ Nuovo budget”.</div></div> : <>
+        <div className="card" style={{marginBottom:16}}>
+          <div className="card-title">Budget salvati ({ids.length})</div>
+          <div className="tbl-wrap"><table className="tbl">
+            <thead><tr><th>Nome</th><th>Periodo</th><th className="num">Voci</th><th className="num">Ricavi budget</th><th className="num">Costi budget</th><th style={{width:120}}></th></tr></thead>
+            <tbody>
+              {ids.map(k=>{ const bx=budgets[k]; const v=bx.voci||[];
+                const ric=r2(v.filter(x=>x.natura==='ricavo').reduce((s,x)=>s+(parseFloat(x.importo)||0),0));
+                const cos=r2(v.filter(x=>x.natura==='costo').reduce((s,x)=>s+(parseFloat(x.importo)||0),0));
+                return <tr key={k} className={k===sel?'gj-sel':''} style={{cursor:'pointer'}} onClick={()=>setSel(k)}>
+                  <td><b>{bx.nome}</b>{k===sel && <span className="pill" style={{marginLeft:6,background:'var(--accent-soft)',color:'var(--accent-ink)'}}>aperto</span>}</td>
+                  <td style={{fontSize:12,color:'var(--ink-3)',whiteSpace:'nowrap'}}>{bx.da||bx.a?`${bx.da||'inizio'} → ${bx.a||'oggi'}`:'tutto'}</td>
+                  <td className="num">{v.length}</td>
+                  <td className="num">{num2(ric)}</td>
+                  <td className="num">{num2(cos)}</td>
+                  <td style={{whiteSpace:'nowrap',textAlign:'right'}} onClick={e=>e.stopPropagation()}>
+                    <button className="btn ghost sm" onClick={()=>setSel(k)}>Apri</button>{' '}
+                    <button className="btn danger sm" title="Elimina" onClick={()=>{ if(window.confirm(`Eliminare il budget "${bx.nome}"?`)){ const n={...budgets}; delete n[k]; setBudgets(n); toast('Budget eliminato','success'); } }}>✕</button>
+                  </td>
+                </tr>;
+              })}
+            </tbody>
+          </table></div>
+        </div>
+
         <div className="filters">
           <span className="label">Budget</span>
           <select value={sel} onChange={e=>setSel(e.target.value)}>{ids.map(k=><option key={k} value={k}>{budgets[k].nome}</option>)}</select>
