@@ -3457,46 +3457,62 @@ function NewBudgetModal({scritture, onCreate, onClose}){
 
 function PageBudget({scritture, budgets, setBudgets, toast}){
   const ids=Object.keys(budgets||{});
-  const [sel,setSel]=useState(ids[0]||'');
+  const [sel,setSel]=useState('');            // '' = schermata iniziale (elenco)
+  const [draft,setDraft]=useState(null);      // copia di lavoro del budget aperto
   const [editing,setEditing]=useState(null);
   const [creating,setCreating]=useState(false);
   const [mostraCons,setMostraCons]=useState(true);
   const [sommaCons,setSommaCons]=useState(false);
   const [statoConti,setStatoConti]=useState(false);
-  useEffect(()=>{ const k=Object.keys(budgets||{}); if(!k.includes(sel)) setSel(k[0]||''); },[budgets]);
 
-  const b = sel ? budgets[sel] : null;
-  const upd = patch => setBudgets({...budgets,[sel]:{...b,...patch}});
+  const b = draft;
+  const salvato = sel ? budgets[sel] : null;
+  const dirty = !!(sel && draft && JSON.stringify(draft)!==JSON.stringify(salvato));
+  const upd = patch => setDraft(d=>({...d,...patch}));
 
+  function apri(k){ setSel(k); setDraft(JSON.parse(JSON.stringify(budgets[k]))); setStatoConti(false); }
+  function chiudi(){
+    if(dirty && !window.confirm('Ci sono modifiche non salvate. Uscire senza salvare?')) return;
+    setSel(''); setDraft(null);
+  }
+  function salva(){
+    if(!sel||!draft) return;
+    setBudgets({...budgets,[sel]:draft});
+    toast('Modifiche salvate','success');
+  }
   function nuovo(){ setCreating(true); }
   function creaBudget(dati){
-    const id=uid();
-    setBudgets({...budgets,[id]:{id,...dati}});
-    setSel(id); setCreating(false); toast('Budget creato','success');
+    const id=uid(); const nuovoB={id,...dati};
+    setBudgets({...budgets,[id]:nuovoB});
+    setSel(id); setDraft(JSON.parse(JSON.stringify(nuovoB)));
+    setCreating(false); toast('Budget creato','success');
   }
   function duplica(){
-    if(!b) return;
-    const nome=window.prompt('Nome della copia:',b.nome+' (copia)');
+    if(!draft) return;
+    const nome=window.prompt('Nome della copia:',(draft.nome||'')+' (copia)');
     if(!nome) return;
     const id=uid();
-    setBudgets({...budgets,[id]:{...b,id,nome:nome.trim(),voci:(b.voci||[]).map(v=>({...v,id:uid()}))}});
-    setSel(id); toast('Scenario duplicato','success');
+    const copia={...JSON.parse(JSON.stringify(draft)),id,nome:nome.trim(),voci:(draft.voci||[]).map(v=>({...v,id:uid()}))};
+    setBudgets({...budgets,[id]:copia});
+    setSel(id); setDraft(JSON.parse(JSON.stringify(copia)));
+    toast('Scenario duplicato (già salvato)','success');
   }
-  function elimina(){
-    if(!b) return;
-    if(!window.confirm(`Eliminare il budget "${b.nome}"?`)) return;
-    const n={...budgets}; delete n[sel]; setBudgets(n); toast('Budget eliminato','success');
+  function eliminaDaLista(k){
+    if(!window.confirm(`Eliminare il budget "${budgets[k].nome}"?`)) return;
+    const n={...budgets}; delete n[k]; setBudgets(n);
+    if(k===sel){ setSel(''); setDraft(null); }
+    toast('Budget eliminato','success');
   }
   function salvaVoce(v){
-    const voci=[...(b.voci||[])];
+    const voci=[...((draft&&draft.voci)||[])];
     const i=voci.findIndex(x=>x.id===v.id);
     const {nuova,...clean}=v;
     if(i>=0) voci[i]=clean; else voci.push(clean);
     upd({voci}); setEditing(null);
   }
-  function eliminaVoce(id){ if(!window.confirm('Eliminare questa voce?')) return; upd({voci:(b.voci||[]).filter(v=>v.id!==id)}); }
+  function eliminaVoce(id){ if(!window.confirm('Eliminare questa voce?')) return; upd({voci:(draft.voci||[]).filter(v=>v.id!==id)}); }
 
-  /* ---- calcolo consuntivo: attribuzione singola per conto (niente doppi conteggi) ---- */
+  /* ---- consuntivo: attribuzione singola per conto (niente doppi conteggi) ---- */
   const calc = useMemo(()=>{
     if(!b) return {righe:[],tot:{}};
     const usati=new Set();
@@ -3556,124 +3572,140 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
   };
   const nCol = mostraCons?7:5;
 
+  /* ============ SCHERMATA INIZIALE: elenco budget ============ */
+  if(!sel || !draft){
+    return (
+      <div>
+        <PageHead title="Budget" sub="Scenari di budget confrontati con il consuntivo di partita doppia">
+          <button className="btn accent" onClick={nuovo}>+ Nuovo budget</button>
+        </PageHead>
+        {ids.length===0 ? <div className="card"><div className="empty-state">Nessun budget salvato. Creane uno con “+ Nuovo budget”.</div></div> : (
+          <div className="card">
+            <div className="card-title">Budget salvati ({ids.length})</div>
+            <div className="tbl-wrap"><table className="tbl">
+              <thead><tr><th>Nome</th><th>Periodo</th><th className="num">Voci</th><th className="num">Ricavi budget</th><th className="num">Costi budget</th><th style={{width:130}}></th></tr></thead>
+              <tbody>
+                {ids.map(k=>{ const bx=budgets[k]; const v=bx.voci||[];
+                  const ric=r2(v.filter(x=>x.natura==='ricavo').reduce((s,x)=>s+(parseFloat(x.importo)||0),0));
+                  const cos=r2(v.filter(x=>x.natura==='costo').reduce((s,x)=>s+(parseFloat(x.importo)||0),0));
+                  return <tr key={k} style={{cursor:'pointer'}} onClick={()=>apri(k)} title="Apri il budget">
+                    <td><b>{bx.nome}</b></td>
+                    <td style={{fontSize:12,color:'var(--ink-3)',whiteSpace:'nowrap'}}>{bx.da||bx.a?`${bx.da||'inizio'} → ${bx.a||'oggi'}`:'tutto'}</td>
+                    <td className="num">{v.length}</td>
+                    <td className="num">{num2(ric)}</td>
+                    <td className="num">{num2(cos)}</td>
+                    <td style={{whiteSpace:'nowrap',textAlign:'right'}} onClick={e=>e.stopPropagation()}>
+                      <button className="btn ghost sm" onClick={()=>apri(k)}>Apri</button>{' '}
+                      <button className="btn danger sm" title="Elimina" onClick={()=>eliminaDaLista(k)}>✕</button>
+                    </td>
+                  </tr>;
+                })}
+              </tbody>
+            </table></div>
+          </div>
+        )}
+        {creating && <NewBudgetModal scritture={scritture} onCreate={creaBudget} onClose={()=>setCreating(false)}/>}
+      </div>
+    );
+  }
+
+  /* ============ FOGLIO BUDGET APERTO ============ */
   return (
     <div>
-      <PageHead title="Budget" sub="Scenari di budget confrontati con il consuntivo di partita doppia">
-        <button className="btn ghost" onClick={nuovo}>+ Nuovo budget</button>
-        {b && <button className="btn ghost" onClick={duplica}>⧉ Duplica</button>}
-        {b && <button className="btn ghost" onClick={exportXls}>↓ Excel</button>}
+      <PageHead title={b.nome||'Budget'} sub="Modifica il foglio e salva le variazioni">
+        <button className="btn ghost" onClick={chiudi}>← Elenco</button>
+        <button className="btn ghost" onClick={duplica}>⧉ Duplica</button>
+        <button className="btn ghost" onClick={exportXls}>↓ Excel</button>
+        <button className={'btn '+(dirty?'accent':'ghost')} onClick={salva} disabled={!dirty}>{dirty?'💾 Salva modifiche':'✓ Salvato'}</button>
       </PageHead>
 
-      {ids.length===0 ? <div className="card"><div className="empty-state">Nessun budget. Creane uno con “+ Nuovo budget”.</div></div> : <>
-        <div className="card" style={{marginBottom:16}}>
-          <div className="card-title">Budget salvati ({ids.length})</div>
-          <div className="tbl-wrap"><table className="tbl">
-            <thead><tr><th>Nome</th><th>Periodo</th><th className="num">Voci</th><th className="num">Ricavi budget</th><th className="num">Costi budget</th><th style={{width:120}}></th></tr></thead>
-            <tbody>
-              {ids.map(k=>{ const bx=budgets[k]; const v=bx.voci||[];
-                const ric=r2(v.filter(x=>x.natura==='ricavo').reduce((s,x)=>s+(parseFloat(x.importo)||0),0));
-                const cos=r2(v.filter(x=>x.natura==='costo').reduce((s,x)=>s+(parseFloat(x.importo)||0),0));
-                return <tr key={k} className={k===sel?'gj-sel':''} style={{cursor:'pointer'}} onClick={()=>setSel(k)}>
-                  <td><b>{bx.nome}</b>{k===sel && <span className="pill" style={{marginLeft:6,background:'var(--accent-soft)',color:'var(--accent-ink)'}}>aperto</span>}</td>
-                  <td style={{fontSize:12,color:'var(--ink-3)',whiteSpace:'nowrap'}}>{bx.da||bx.a?`${bx.da||'inizio'} → ${bx.a||'oggi'}`:'tutto'}</td>
-                  <td className="num">{v.length}</td>
-                  <td className="num">{num2(ric)}</td>
-                  <td className="num">{num2(cos)}</td>
-                  <td style={{whiteSpace:'nowrap',textAlign:'right'}} onClick={e=>e.stopPropagation()}>
-                    <button className="btn ghost sm" onClick={()=>setSel(k)}>Apri</button>{' '}
-                    <button className="btn danger sm" title="Elimina" onClick={()=>{ if(window.confirm(`Eliminare il budget "${bx.nome}"?`)){ const n={...budgets}; delete n[k]; setBudgets(n); toast('Budget eliminato','success'); } }}>✕</button>
-                  </td>
-                </tr>;
-              })}
-            </tbody>
-          </table></div>
-        </div>
+      {dirty && <div style={{fontSize:12.5,color:'#7a5a1d',background:'#f7ecd2',border:'1px solid #e6d5a8',borderRadius:6,padding:'7px 12px',marginBottom:14}}>Modifiche non salvate — premi “Salva modifiche” per confermarle.</div>}
 
-        <div className="filters">
-          <span className="label">Budget</span>
-          <select value={sel} onChange={e=>setSel(e.target.value)}>{ids.map(k=><option key={k} value={k}>{budgets[k].nome}</option>)}</select>
-          <span className="label">Dal</span>
-          <input type="date" value={b?.da||''} onChange={e=>upd({da:e.target.value})}/>
-          <span className="label">Al</span>
-          <input type="date" value={b?.a||''} onChange={e=>upd({a:e.target.value})}/>
-          <div style={{flex:1}}></div>
-          <button className="btn danger sm" onClick={elimina}>Elimina budget</button>
-        </div>
+      <div className="filters">
+        <span className="label">Nome</span>
+        <input type="text" value={b.nome||''} onChange={e=>upd({nome:e.target.value})} style={{maxWidth:220}}/>
+        <span className="label">Dal</span>
+        <input type="date" value={b.da||''} onChange={e=>upd({da:e.target.value})}/>
+        <span className="label">Al</span>
+        <input type="date" value={b.a||''} onChange={e=>upd({a:e.target.value})}/>
+      </div>
 
-        <div className="card" style={{marginBottom:16,display:'flex',gap:18,flexWrap:'wrap',alignItems:'center'}}>
-          <label style={{display:'flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
-            <input type="checkbox" checked={mostraCons} onChange={e=>setMostraCons(e.target.checked)}/> Confronto consuntivo
-          </label>
-          <label style={{display:'flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
-            <input type="checkbox" checked={sommaCons} onChange={e=>setSommaCons(e.target.checked)}/> Somma consuntivo al budget
-          </label>
-          <span style={{fontSize:11.5,color:'var(--ink-3)'}}>Con la somma attiva, l’importo che inserisci si aggiunge a quanto già registrato (forecast).</span>
-          <div style={{flex:1}}></div>
-          <button className="btn ghost sm" onClick={()=>setStatoConti(v=>!v)}>{statoConti?'Nascondi':'Mostra'} stato conti</button>
-        </div>
+      <div className="card" style={{marginBottom:16,display:'flex',gap:18,flexWrap:'wrap',alignItems:'center'}}>
+        <label style={{display:'flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
+          <input type="checkbox" checked={mostraCons} onChange={e=>setMostraCons(e.target.checked)}/> Confronto consuntivo
+        </label>
+        <label style={{display:'flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
+          <input type="checkbox" checked={sommaCons} onChange={e=>setSommaCons(e.target.checked)}/> Somma consuntivo al budget
+        </label>
+        <span style={{fontSize:11.5,color:'var(--ink-3)'}}>Con la somma attiva, l’importo che inserisci si aggiunge a quanto già registrato (forecast).</span>
+        <div style={{flex:1}}></div>
+        <button className="btn ghost sm" onClick={()=>setStatoConti(v=>!v)}>{statoConti?'Nascondi':'Mostra'} stato conti</button>
+      </div>
 
-        <div className="kpi-grid" style={{marginBottom:18}}>
-          <Kpi label="Ricavi" value={eur(calc.tot.ricBudg)} hint={mostraCons?`Consuntivo ${eur(calc.tot.ricCons)}`:null}/>
-          <Kpi label="Costi" value={eur(calc.tot.cosBudg)} hint={mostraCons?`Consuntivo ${eur(calc.tot.cosCons)}`:null}/>
-          <Kpi label="Risultato" value={eur(calc.tot.resBudg)} neg={calc.tot.resBudg<0} hint={mostraCons?`Consuntivo ${eur(calc.tot.resCons)}`:null} accent/>
-          {mostraCons && <Kpi label="Scostamento risultato" value={(calc.tot.scost>0?'+':'')+eur(calc.tot.scost)} neg={calc.tot.scost<0}/>}
-        </div>
+      <div className="kpi-grid" style={{marginBottom:18}}>
+        <Kpi label="Ricavi" value={eur(calc.tot.ricBudg)} hint={mostraCons?`Consuntivo ${eur(calc.tot.ricCons)}`:null}/>
+        <Kpi label="Costi" value={eur(calc.tot.cosBudg)} hint={mostraCons?`Consuntivo ${eur(calc.tot.cosCons)}`:null}/>
+        <Kpi label="Risultato" value={eur(calc.tot.resBudg)} neg={calc.tot.resBudg<0} hint={mostraCons?`Consuntivo ${eur(calc.tot.resCons)}`:null} accent/>
+        {mostraCons && <Kpi label="Scostamento risultato" value={(calc.tot.scost>0?'+':'')+eur(calc.tot.scost)} neg={calc.tot.scost<0}/>}
+      </div>
 
-        {statoConti && <div className="card" style={{marginBottom:18}}>
-          <div className="card-title">Stato dei conti nel periodo</div>
-          <div className="tbl-wrap" style={{maxHeight:280,overflowY:'auto'}}>
-            <table className="tbl">
-              <thead><tr><th>Conto</th><th>Categoria</th><th className="num">Saldo</th></tr></thead>
-              <tbody>
-                {CONTI.map(c=>({c,v:movConto(scritture,c.codice,c.categoria==='RICAVI'?'ricavo':(c.prospetto==='CE'?'costo':'patrimoniale'),b?.da,b?.a)}))
-                  .filter(x=>x.v!==0)
-                  .sort((x,y)=>Math.abs(y.v)-Math.abs(x.v))
-                  .map(({c,v})=><tr key={c.codice}><td><b>{c.nome}</b></td><td style={{fontSize:12}}>{c.categoria}</td><td className={'num '+(v<0?'neg':'')}>{num2(v)}</td></tr>)}
-              </tbody>
-            </table>
-          </div>
-        </div>}
-
-        <div className="tbl-wrap">
+      {statoConti && <div className="card" style={{marginBottom:18}}>
+        <div className="card-title">Stato dei conti nel periodo</div>
+        <div className="tbl-wrap" style={{maxHeight:280,overflowY:'auto'}}>
           <table className="tbl">
-            <thead><tr>
-              <th>Voce</th><th>Conti collegati</th><th className="num">{sommaCons?'Forecast':'Budget'}</th>
-              {mostraCons && <th className="num">Consuntivo</th>}
-              {mostraCons && <th className="num">Scostamento</th>}
-              <th>Note</th><th style={{width:80}}></th>
-            </tr></thead>
+            <thead><tr><th>Conto</th><th>Categoria</th><th className="num">Saldo</th></tr></thead>
             <tbody>
-              {(b.voci||[]).length===0 && <tr><td colSpan={nCol} className="empty-state">Nessuna voce. Aggiungine una qui sotto.</td></tr>}
-              {NATURE.map(n=>{
-                const rr=calc.righe.filter(r=>r.natura===n.v);
-                if(!rr.length) return null;
-                const tb=r2(rr.reduce((s,r)=>s+r.budg,0)), tc=r2(rr.reduce((s,r)=>s+r.cons,0));
-                return (
-                  <React.Fragment key={n.v}>
-                    <tr className="gj-head"><td colSpan={nCol} style={{fontWeight:600}}>{n.l}</td></tr>
-                    {rr.map(r=><Riga key={r.id} r={r}/>)}
-                    <tr className="rf-tot"><td colSpan={2} style={{fontWeight:600}}>Totale {n.l.toLowerCase()}</td>
-                      <td className="num" style={{fontWeight:600}}>{num2(tb)}</td>
-                      {mostraCons && <td className="num" style={{fontWeight:600}}>{num2(tc)}</td>}
-                      {mostraCons && <td className="num" style={{fontWeight:600}}>{num2(r2(tc-tb))}</td>}
-                      <td colSpan={2}></td></tr>
-                  </React.Fragment>
-                );
-              })}
-              <tr className="rf-tot strong"><td colSpan={2} style={{fontWeight:700}}>RISULTATO (ricavi − costi)</td>
-                <td className="num" style={{fontWeight:700}}>{num2(calc.tot.resBudg)}</td>
-                {mostraCons && <td className="num" style={{fontWeight:700}}>{num2(calc.tot.resCons)}</td>}
-                {mostraCons && <td className={'num '+(calc.tot.scost<0?'neg':'pos')} style={{fontWeight:700}}>{calc.tot.scost>0?'+':''}{num2(calc.tot.scost)}</td>}
-                <td colSpan={2}></td></tr>
+              {CONTI.map(c=>({c,v:movConto(scritture,c.codice,c.categoria==='RICAVI'?'ricavo':(c.prospetto==='CE'?'costo':'patrimoniale'),b.da,b.a)}))
+                .filter(x=>x.v!==0)
+                .sort((x,y)=>Math.abs(y.v)-Math.abs(x.v))
+                .map(({c,v})=><tr key={c.codice}><td><b>{c.nome}</b></td><td style={{fontSize:12}}>{c.categoria}</td><td className={'num '+(v<0?'neg':'')}>{num2(v)}</td></tr>)}
             </tbody>
           </table>
         </div>
-        <button className="btn accent" style={{marginTop:14}} onClick={()=>setEditing({id:uid(),descr:'',natura:'costo',conti:[],importo:'',note:'',nuova:true})}>+ Aggiungi voce</button>
-        <div style={{fontSize:12,color:'var(--ink-3)',marginTop:10,fontStyle:'italic'}}>Il consuntivo è calcolato dal libro giornale sui conti collegati a ogni voce (avere−dare per i ricavi, dare−avere per costi e patrimoniali). Se lo stesso conto compare in più voci, viene attribuito solo alla prima per evitare doppi conteggi. I conti patrimoniali usano sempre il saldo pieno, non solo il periodo.</div>
-      </>}
+      </div>}
+
+      <div className="tbl-wrap">
+        <table className="tbl">
+          <thead><tr>
+            <th>Voce</th><th>Conti collegati</th><th className="num">{sommaCons?'Forecast':'Budget'}</th>
+            {mostraCons && <th className="num">Consuntivo</th>}
+            {mostraCons && <th className="num">Scostamento</th>}
+            <th>Note</th><th style={{width:80}}></th>
+          </tr></thead>
+          <tbody>
+            {(b.voci||[]).length===0 && <tr><td colSpan={nCol} className="empty-state">Nessuna voce. Aggiungine una qui sotto.</td></tr>}
+            {NATURE.map(n=>{
+              const rr=calc.righe.filter(r=>r.natura===n.v);
+              if(!rr.length) return null;
+              const tb=r2(rr.reduce((s,r)=>s+r.budg,0)), tc=r2(rr.reduce((s,r)=>s+r.cons,0));
+              return (
+                <React.Fragment key={n.v}>
+                  <tr className="gj-head"><td colSpan={nCol} style={{fontWeight:600}}>{n.l}</td></tr>
+                  {rr.map(r=><Riga key={r.id} r={r}/>)}
+                  <tr className="rf-tot"><td colSpan={2} style={{fontWeight:600}}>Totale {n.l.toLowerCase()}</td>
+                    <td className="num" style={{fontWeight:600}}>{num2(tb)}</td>
+                    {mostraCons && <td className="num" style={{fontWeight:600}}>{num2(tc)}</td>}
+                    {mostraCons && <td className="num" style={{fontWeight:600}}>{num2(r2(tc-tb))}</td>}
+                    <td colSpan={2}></td></tr>
+                </React.Fragment>
+              );
+            })}
+            <tr className="rf-tot strong"><td colSpan={2} style={{fontWeight:700}}>RISULTATO (ricavi − costi)</td>
+              <td className="num" style={{fontWeight:700}}>{num2(calc.tot.resBudg)}</td>
+              {mostraCons && <td className="num" style={{fontWeight:700}}>{num2(calc.tot.resCons)}</td>}
+              {mostraCons && <td className={'num '+(calc.tot.scost<0?'neg':'pos')} style={{fontWeight:700}}>{calc.tot.scost>0?'+':''}{num2(calc.tot.scost)}</td>}
+              <td colSpan={2}></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div style={{display:'flex',gap:10,marginTop:14,flexWrap:'wrap'}}>
+        <button className="btn accent" onClick={()=>setEditing({id:uid(),descr:'',natura:'costo',conti:[],importo:'',note:'',nuova:true})}>+ Aggiungi voce</button>
+        <div style={{flex:1}}></div>
+        <button className="btn danger" onClick={()=>eliminaDaLista(sel)}>Elimina budget</button>
+      </div>
+      <div style={{fontSize:12,color:'var(--ink-3)',marginTop:10,fontStyle:'italic'}}>Il consuntivo è calcolato dal libro giornale sui conti collegati a ogni voce (avere−dare per i ricavi, dare−avere per costi e patrimoniali). Se lo stesso conto compare in più voci, viene attribuito solo alla prima per evitare doppi conteggi. I conti patrimoniali usano sempre il saldo pieno, non solo il periodo.</div>
 
       {editing && <BudgetVoceModal voce={editing} onSave={salvaVoce} onClose={()=>setEditing(null)}/>}
-      {creating && <NewBudgetModal scritture={scritture} onCreate={creaBudget} onClose={()=>setCreating(false)}/>}
     </div>
   );
 }
