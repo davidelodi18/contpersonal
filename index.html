@@ -3558,20 +3558,64 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
 
   function exportXls(){
     if(!window.XLSX){ toast('Libreria Excel non caricata','error'); return; }
-    const head=['Voce','Natura','Conti','Budget','Consuntivo','Scostamento','Note'];
+    const head=['Voce','Natura','Conti','Budget','Consuntivo','Scostamento','Cassa','Note'];
     const aoa=[[b.nome],[b.da||b.a?`Periodo ${b.da||'inizio'} → ${b.a||'oggi'}`:'Periodo: tutto'],[],head];
     NATURE.forEach(n=>{
       const rr=calc.righe.filter(r=>r.natura===n.v); if(!rr.length) return;
       aoa.push([n.l.toUpperCase()]);
-      rr.forEach(r=>aoa.push([r.descr,n.l,(r.conti||[]).map(c=>contoByCode[c]?.nome||c).join(', '),r.budg,r.cons,r.scost,r.note||'']));
+      rr.forEach(r=>aoa.push([r.descr,n.l,(r.conti||[]).map(c=>contoByCode[c]?.nome||c).join(', '),r.budg,r.cons,r.scost,r.cassa?contoByCode[parseInt(r.cassa)]?.nome:'',r.note||'']));
     });
     aoa.push([]);
-    aoa.push(['TOTALE RICAVI','','',calc.tot.ricBudg,calc.tot.ricCons,r2(calc.tot.ricCons-calc.tot.ricBudg),'']);
-    aoa.push(['TOTALE COSTI','','',calc.tot.cosBudg,calc.tot.cosCons,r2(calc.tot.cosCons-calc.tot.cosBudg),'']);
-    aoa.push(['RISULTATO','','',calc.tot.resBudg,calc.tot.resCons,calc.tot.scost,'']);
+    aoa.push(['TOTALE RICAVI','','',calc.tot.ricBudg,calc.tot.ricCons,r2(calc.tot.ricCons-calc.tot.ricBudg),'','']);
+    aoa.push(['TOTALE COSTI','','',calc.tot.cosBudg,calc.tot.cosCons,r2(calc.tot.cosCons-calc.tot.cosBudg),'','']);
+    aoa.push(['RISULTATO','','',calc.tot.resBudg,calc.tot.resCons,calc.tot.scost,'','']);
     const wb=XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(aoa),'Budget');
+    if(cassaPlan.length){
+      const ca=[['PIANO DI CASSA PREVISIONALE — '+b.nome],[],['Conto','Saldo attuale','Entrate previste','Uscite previste','Saldo previsto']];
+      cassaPlan.forEach(p=>ca.push([p.nome,p.attuale,p.entrate,p.uscite,p.previsto]));
+      XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(ca),'Piano di cassa');
+    }
     XLSX.writeFile(wb,'Budget_'+(b.nome||'').replace(/[^\w]+/g,'_')+'.xlsx');
+    toast('Export Excel completato','success');
+  }
+
+  function exportPdf(){
+    if(!window.jspdf){ toast('Libreria PDF non caricata','error'); return; }
+    const {jsPDF}=window.jspdf;
+    const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+    const cx=doc.internal.pageSize.getWidth()/2;
+    doc.setFont('helvetica','bold'); doc.setFontSize(16); doc.text('BUDGET',cx,18,{align:'center'});
+    doc.setFontSize(12); doc.setFont('helvetica','normal'); doc.text(b.nome||'',cx,25,{align:'center'});
+    doc.setFontSize(9); doc.setTextColor(120);
+    doc.text((b.da||b.a?`Periodo ${b.da||'inizio'} → ${b.a||'oggi'}`:'Periodo: tutto')+' · generato il '+new Date().toLocaleDateString('it-IT'),cx,31,{align:'center'});
+    doc.setTextColor(0);
+    const HEAD=[31,79,143], SUB=[240,238,233], TOT=[225,233,228];
+    const showC=mostraCons;
+    const headRow=showC?['Voce','Budget','Consuntivo','Scostam.']:['Voce','Budget'];
+    const body=[];
+    NATURE.forEach(n=>{ const rr=calc.righe.filter(r=>r.natura===n.v); if(!rr.length) return;
+      body.push([{content:n.l.toUpperCase(),colSpan:headRow.length,styles:{fontStyle:'bold',fillColor:SUB}}]);
+      rr.forEach(r=>{ const row=[r.descr+(r.note?'  ('+r.note+')':''),num2(r.budg)]; if(showC){ row.push(num2(r.cons)); row.push((r.scost>0?'+':'')+num2(r.scost)); } body.push(row); });
+      const tb=r2(rr.reduce((s,r)=>s+r.budg,0)), tc=r2(rr.reduce((s,r)=>s+r.cons,0));
+      const tr=[{content:'Totale '+n.l.toLowerCase(),styles:{fontStyle:'bold'}},{content:num2(tb),styles:{fontStyle:'bold'}}];
+      if(showC){ tr.push({content:num2(tc),styles:{fontStyle:'bold'}}); tr.push({content:num2(r2(tc-tb)),styles:{fontStyle:'bold'}}); }
+      body.push(tr);
+    });
+    const rres=[{content:'RISULTATO (ricavi − costi)',styles:{fontStyle:'bold',fillColor:TOT}},{content:num2(calc.tot.resBudg),styles:{fontStyle:'bold',fillColor:TOT}}];
+    if(showC){ rres.push({content:num2(calc.tot.resCons),styles:{fontStyle:'bold',fillColor:TOT}}); rres.push({content:(calc.tot.scost>0?'+':'')+num2(calc.tot.scost),styles:{fontStyle:'bold',fillColor:TOT}}); }
+    body.push(rres);
+    const colStyles=showC?{1:{halign:'right'},2:{halign:'right'},3:{halign:'right'}}:{1:{halign:'right'}};
+    doc.autoTable({startY:37,head:[headRow],body,styles:{fontSize:8.5,cellPadding:1.6},headStyles:{fillColor:HEAD},columnStyles:colStyles});
+
+    if(cassaPlan.length){
+      let y=doc.lastAutoTable.finalY+10; if(y>250){ doc.addPage(); y=20; }
+      doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.text('Piano di cassa previsionale',14,y); y+=3;
+      const cbody=cassaPlan.map(p=>[p.nome,num2(p.attuale),'+'+num2(p.entrate),'−'+num2(p.uscite),num2(p.previsto)]);
+      doc.autoTable({startY:y+2,head:[['Conto','Saldo attuale','Entrate','Uscite','Saldo previsto']],body:cbody,styles:{fontSize:8.5,cellPadding:1.6},headStyles:{fillColor:HEAD},columnStyles:{1:{halign:'right'},2:{halign:'right'},3:{halign:'right'},4:{halign:'right'}}});
+    }
+    doc.save('Budget_'+(b.nome||'').replace(/[^\w]+/g,'_')+'.pdf');
+    toast('PDF generato','success');
   }
 
   const nCol = mostraCons?6:4;
@@ -3619,6 +3663,7 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
       <PageHead title={b.nome||'Budget'} sub="Modifica il foglio e salva le variazioni">
         <button className="btn ghost" onClick={chiudi}>← Elenco</button>
         <button className="btn ghost" onClick={duplica}>⧉ Duplica</button>
+        <button className="btn ghost" onClick={exportPdf}>↓ PDF</button>
         <button className="btn ghost" onClick={exportXls}>↓ Excel</button>
         <button className={'btn '+(dirty?'accent':'ghost')} onClick={salva} disabled={!dirty}>{dirty?'💾 Salva modifiche':'✓ Salvato'}</button>
       </PageHead>
