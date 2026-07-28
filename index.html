@@ -3338,7 +3338,7 @@ function BudgetVoceModal({voce, onSave, onClose}){
           <div className="form-row"><label>Natura</label>
             <select value={d.natura} onChange={e=>setD(v=>({...v,natura:e.target.value,conti:[]}))}>{NATURE.map(n=><option key={n.v} value={n.v}>{n.l}</option>)}</select></div>
           <div className="form-row"><label>Importo di budget €</label>
-            <input type="number" step="0.01" value={d.importo} onChange={e=>setD(v=>({...v,importo:e.target.value}))} placeholder="0,00"/></div>
+            <input type="number" min="0" step="0.01" value={d.importo} onChange={e=>setD(v=>({...v,importo:e.target.value.replace('-','')}))} placeholder="0,00"/></div>
           <div className="form-row"><label>Note</label>
             <input type="text" value={d.note||''} onChange={e=>setD(v=>({...v,note:e.target.value}))} placeholder="facoltative"/></div>
           <div className="form-row"><label>Conto di cassa (piano di cassa)</label>
@@ -3757,10 +3757,12 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
                     return (
                       <React.Fragment key={r.id}>
                       <tr>
-                        <td><b>{r.descr}</b>{r.cassa && <span className="pill" style={{marginLeft:6,background:'var(--accent-soft)',color:'var(--accent-ink)'}}>→ {contoByCode[parseInt(r.cassa)]?.nome}</span>}{r.dupl>0 && <span className="pill" style={{marginLeft:6,background:'#f7ecd2',color:'#7a5a1d'}} title="Alcuni conti sono già attribuiti a una voce precedente">{r.dupl} conto già usato</span>}</td>
+                        <td><b>{r.descr}</b>{r.cassa && <span className="pill" style={{marginLeft:6,background:'var(--accent-soft)',color:'var(--accent-ink)'}}>→ {contoByCode[parseInt(r.cassa)]?.nome}</span>}{r.dupl>0 && <span className="pill" style={{marginLeft:6,background:'#f7ecd2',color:'#7a5a1d'}} title="Alcuni conti sono già attribuiti a una voce precedente">{r.dupl} conto già usato</span>}
+                          <div style={{marginTop:3}}><select value={r.natura} onChange={e=>updVoce(r.id,{natura:e.target.value})} style={{fontSize:11,padding:'1px 6px',color:'var(--ink-2)'}} title="Costo o ricavo — determina il segno">{NATURE.map(n=><option key={n.v} value={n.v}>{n.l}</option>)}</select></div>
+                        </td>
                         <td style={{fontSize:12,color:'var(--ink-3)'}}>{(r.conti||[]).map(c=>contoByCode[c]?.nome||('#'+c)).join(' · ')||'—'}</td>
                         <td className="num" style={{padding:'4px 6px'}}>
-                          <input type="number" step="0.01" value={r.importo??''} onChange={e=>updVoce(r.id,{importo:e.target.value})}
+                          <input type="number" min="0" step="0.01" value={r.importo??''} onChange={e=>updVoce(r.id,{importo:e.target.value.replace('-','')})}
                             placeholder="0,00"
                             style={{width:'100%',minWidth:78,textAlign:'right',border:'1px solid var(--rule)',borderRadius:4,padding:'4px 6px',fontFamily:"'JetBrains Mono',ui-monospace,monospace",fontSize:12.5,background:'var(--panel)'}}/>
                         </td>
