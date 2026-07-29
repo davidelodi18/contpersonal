@@ -3346,6 +3346,10 @@ function BudgetVoceModal({voce, onSave, onClose}){
               <option value="">— nessuno —</option>
               {LIQ_CODES.map(cod=><option key={cod} value={cod}>{contoByCode[cod]?.nome}</option>)}
             </select></div>
+          <div className="form-row"><label>Data prevista del flusso</label>
+            <input type="date" value={d.dataFlusso||''} onChange={e=>setD(v=>({...v,dataFlusso:e.target.value}))}/>
+            <div style={{fontSize:11,color:'var(--ink-3)',marginTop:4}}>Quando ti aspetti l’incasso o il pagamento. Serve per la proiezione dell’esposizione di cassa.</div>
+          </div>
           <div className="form-row"><label>Conti collegati ({(d.conti||[]).length})</label>
             <div style={{maxHeight:210,overflowY:'auto',border:'1px solid var(--rule)',borderRadius:6,padding:'6px 10px'}}>
               {disponibili.length===0 && <div style={{fontSize:12,color:'var(--ink-3)',padding:'6px 0'}}>Nessun conto disponibile per questa natura</div>}
@@ -3533,6 +3537,34 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
       return {cod,nome:contoByCode[cod]?.nome,attuale,entrate:d.entrate,uscite:d.uscite,previsto:r2(attuale+impatto)}; });
   },[b,scritture]);
 
+  /* ---- Timeline esposizione: saldo previsto giorno per giorno, per conto di cassa ---- */
+  const esposizione = useMemo(()=>{
+    if(!b) return {conti:[],eventi:[],minGlob:null};
+    const cassaCods=[...new Set((b.voci||[]).filter(v=>v.cassa!=null&&v.cassa!=='').map(v=>parseInt(v.cassa)).filter(c=>LIQ_CODES.includes(c)))];
+    if(!cassaCods.length) return {conti:[],eventi:[],minGlob:null};
+    const saldiIni={}; cassaCods.forEach(c=>saldiIni[c]=saldoCassa(c));
+    // eventi datati (voci con importo, cassa e data)
+    let flussi=[];
+    (b.voci||[]).forEach(v=>{
+      if(v.cassa==null||v.cassa==='') return; const cod=parseInt(v.cassa); if(!LIQ_CODES.includes(cod)) return;
+      const imp=parseFloat(v.importo)||0; if(!imp) return;
+      const seg=v.natura==='ricavo'?imp:-imp;
+      flussi.push({cod,data:v.dataFlusso||'',descr:v.descr,seg,senzaData:!v.dataFlusso});
+    });
+    flussi.sort((a,b)=>(a.data||'9999').localeCompare(b.data||'9999'));
+    // costruisci righe cumulate per conto
+    const run={...saldiIni};
+    const minPerConto={}; cassaCods.forEach(c=>minPerConto[c]=saldiIni[c]);
+    const eventi=flussi.map(f=>{
+      run[f.cod]=r2((run[f.cod]||0)+f.seg);
+      if(run[f.cod]<minPerConto[f.cod]) minPerConto[f.cod]=run[f.cod];
+      return {...f, saldoDopo:run[f.cod], nome:contoByCode[f.cod]?.nome};
+    });
+    const conti=cassaCods.map(cod=>({cod,nome:contoByCode[cod]?.nome,iniziale:saldiIni[cod],finale:r2(run[cod]),minimo:r2(minPerConto[cod])}));
+    const minGlob=Math.min(...conti.map(c=>c.minimo));
+    return {conti,eventi,minGlob,senzaData:flussi.some(f=>f.senzaData)};
+  },[b,scritture]);
+
   /* ---- consuntivo: attribuzione singola per conto (niente doppi conteggi) ---- */
   const calc = useMemo(()=>{
     if(!b) return {righe:[],tot:{}};
@@ -3577,6 +3609,12 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
       cassaPlan.forEach(p=>ca.push([p.nome,p.attuale,p.entrate,p.uscite,p.previsto]));
       XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(ca),'Piano di cassa');
     }
+    if(esposizione.eventi.length){
+      const ea=[['ESPOSIZIONE — '+b.nome],[],['Data','Voce','Conto','Flusso','Saldo dopo']];
+      esposizione.eventi.forEach(e=>ea.push([e.senzaData?'(senza data)':e.data,e.descr,e.nome,e.seg,e.saldoDopo]));
+      ea.push([]); ea.push(['MINIMI PER CONTO']); esposizione.conti.forEach(c=>ea.push([c.nome,'iniziale '+num2(c.iniziale),'minimo '+num2(c.minimo),'finale '+num2(c.finale)]));
+      XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(ea),'Esposizione');
+    }
     XLSX.writeFile(wb,'Budget_'+(b.nome||'').replace(/[^\w]+/g,'_')+'.xlsx');
     toast('Export Excel completato','success');
   }
@@ -3614,6 +3652,13 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
       doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.text('Piano di cassa previsionale',14,y); y+=3;
       const cbody=cassaPlan.map(p=>[p.nome,num2(p.attuale),'+'+num2(p.entrate),'−'+num2(p.uscite),num2(p.previsto)]);
       doc.autoTable({startY:y+2,head:[['Conto','Saldo attuale','Entrate','Uscite','Saldo previsto']],body:cbody,styles:{fontSize:8.5,cellPadding:1.6},headStyles:{fillColor:HEAD},columnStyles:{1:{halign:'right'},2:{halign:'right'},3:{halign:'right'},4:{halign:'right'}}});
+    }
+    if(esposizione.eventi.length){
+      let y=doc.lastAutoTable.finalY+10; if(y>240){ doc.addPage(); y=20; }
+      doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.text('Esposizione — proiezione cronologica',14,y);
+      const ebody=esposizione.eventi.map(e=>[e.senzaData?'—':fmtDate(e.data),e.descr,e.nome,(e.seg>0?'+':'')+num2(e.seg),num2(e.saldoDopo)]);
+      doc.autoTable({startY:y+3,head:[['Data','Voce','Conto','Flusso','Saldo dopo']],body:ebody,styles:{fontSize:8,cellPadding:1.4},headStyles:{fillColor:HEAD},columnStyles:{3:{halign:'right'},4:{halign:'right'}},
+        didParseCell:d=>{ if(d.section==='body' && esposizione.eventi[d.row.index] && esposizione.eventi[d.row.index].saldoDopo<0){ d.cell.styles.textColor=[170,50,50]; } }});
     }
     doc.save('Budget_'+(b.nome||'').replace(/[^\w]+/g,'_')+'.pdf');
     toast('PDF generato','success');
@@ -3735,6 +3780,33 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
               </tbody>
             </table></div>}
         <div style={{fontSize:11.5,color:'var(--ink-3)',marginTop:8}}>Proiezione: al saldo contabile attuale di ogni conto liquido somma le voci di budget collegate (ricavi in entrata, costi e investimenti in uscita), usando l’importo inserito.</div>
+
+        {esposizione.eventi.length>0 && <div style={{marginTop:22}}>
+          <div className="card-title">Esposizione — proiezione cronologica</div>
+          <div className="kpi-grid" style={{marginBottom:14}}>
+            {esposizione.conti.map(c=>(
+              <Kpi key={c.cod} label={c.nome} value={eur(c.finale)} neg={c.finale<0}
+                hint={`Minimo ${eur(c.minimo)}${c.minimo<0?' ⚠ scoperto':''}`} accent={c.minimo<0}/>
+            ))}
+          </div>
+          {esposizione.minGlob<0 && <div style={{fontSize:12.5,color:'#a33',background:'#f7e4e4',border:'1px solid #e6bcbc',borderRadius:6,padding:'8px 12px',marginBottom:12}}>⚠ In almeno un giorno un conto va sotto zero (minimo {eur(esposizione.minGlob)}). Controlla le righe evidenziate.</div>}
+          {esposizione.senzaData && <div style={{fontSize:12,color:'#7a5a1d',background:'#f7ecd2',border:'1px solid #e6d5a8',borderRadius:6,padding:'7px 12px',marginBottom:12}}>Alcune voci non hanno una data prevista: sono conteggiate all’inizio della proiezione. Impostane la data (✎) per collocarle nel tempo.</div>}
+          <div className="tbl-wrap"><table className="tbl">
+            <thead><tr><th>Data</th><th>Voce</th><th>Conto</th><th className="num">Flusso</th><th className="num">Saldo dopo</th></tr></thead>
+            <tbody>
+              {esposizione.eventi.map((e,i)=>(
+                <tr key={i} style={e.saldoDopo<0?{background:'#faecec'}:null}>
+                  <td style={{whiteSpace:'nowrap'}}>{e.senzaData?'—':fmtDate(e.data)}</td>
+                  <td>{e.descr}</td>
+                  <td style={{fontSize:12,color:'var(--ink-3)'}}>{e.nome}</td>
+                  <td className={'num '+(e.seg>=0?'pos':'neg')}>{e.seg>0?'+':''}{num2(e.seg)}</td>
+                  <td className={'num '+(e.saldoDopo<0?'neg':'')} style={{fontWeight:600}}>{num2(e.saldoDopo)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table></div>
+          <div style={{fontSize:11.5,color:'var(--ink-3)',marginTop:8}}>Ordina le voci di cassa per data e mostra il saldo progressivo di ogni conto: le righe rosse sono i momenti in cui saresti sotto zero. Punto di partenza: il saldo contabile attuale del conto.</div>
+        </div>}
       </div>}
 
       <div className="tbl-wrap">
@@ -3760,7 +3832,7 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
                     return (
                       <React.Fragment key={r.id}>
                       <tr>
-                        <td><b>{r.descr}</b>{r.cassa && <span className="pill" style={{marginLeft:6,background:'var(--accent-soft)',color:'var(--accent-ink)'}}>→ {contoByCode[parseInt(r.cassa)]?.nome}</span>}{r.dupl>0 && <span className="pill" style={{marginLeft:6,background:'#f7ecd2',color:'#7a5a1d'}} title="Alcuni conti sono già attribuiti a una voce precedente">{r.dupl} conto già usato</span>}
+                        <td><b>{r.descr}</b>{r.cassa && <span className="pill" style={{marginLeft:6,background:'var(--accent-soft)',color:'var(--accent-ink)'}}>→ {contoByCode[parseInt(r.cassa)]?.nome}{r.dataFlusso?' · '+fmtDate(r.dataFlusso):''}</span>}{r.dupl>0 && <span className="pill" style={{marginLeft:6,background:'#f7ecd2',color:'#7a5a1d'}} title="Alcuni conti sono già attribuiti a una voce precedente">{r.dupl} conto già usato</span>}
                           <div style={{marginTop:3}}><select value={r.natura} onChange={e=>updVoce(r.id,{natura:e.target.value})} style={{fontSize:11,padding:'1px 6px',color:'var(--ink-2)'}} title="Costo o ricavo — determina il segno">{NATURE.map(n=><option key={n.v} value={n.v}>{n.l}</option>)}</select></div>
                         </td>
                         <td style={{fontSize:12,color:'var(--ink-3)'}}>{(r.conti||[]).map(c=>contoByCode[c]?.nome||('#'+c)).join(' · ')||'—'}</td>
