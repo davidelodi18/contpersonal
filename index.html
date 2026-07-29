@@ -1123,10 +1123,11 @@ function DrillRendiconto({sezKey, sezLabel, catNome, scritture, categorie, updat
     const section = sez==='investimento'?'investimento':(sez==='entrata'?'entrata':(sez==='uscita'?'uscita':(inflow?'entrata':'uscita')));
     const cn=cat||'(senza categoria)';
     if(section!==sezKey || cn!==catNome) return;
-    lines.push({id:s.id,data:s.data,descr:s.descr,amount});
+    lines.push({id:s.id,data:s.data,descr:s.descr,amount, signed: sezKey==='investimento'?(inflow?-amount:amount):amount, inflow});
   });
   lines.sort((a,b)=>(a.data||'').localeCompare(b.data||''));
-  const tot=r2(lines.reduce((s,l)=>s+l.amount,0));
+  const invest = sezKey==='investimento';
+  const tot=r2(lines.reduce((s,l)=>s+(invest?l.signed:l.amount),0));
   const entrata = sezKey==='entrata';
   const view=[...lines].reverse();
   return (
@@ -1139,7 +1140,7 @@ function DrillRendiconto({sezKey, sezLabel, catNome, scritture, categorie, updat
         <div className="modal-body" style={{paddingTop:0}}>
           <div style={{display:'flex',gap:18,margin:'4px 0 14px',fontSize:13,color:'var(--ink-2)'}}>
             <span>{sezLabel}</span>
-            <span style={{marginLeft:'auto'}}>Totale <b className={entrata?'pos':'neg'}>{entrata?'+':'−'}{num2(tot)}</b></span>
+            <span style={{marginLeft:'auto'}}>Totale <b className={(invest?tot>=0:entrata)?'pos':'neg'}>{(invest?tot>=0:entrata)?'+':'−'}{num2(Math.abs(tot))}</b></span>
           </div>
           {updateScritture && lines.length>0 && <div style={{background:'var(--panel-2)',borderRadius:6,padding:'10px 12px',marginBottom:14,display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
             <span style={{fontSize:12.5,color:'var(--ink-2)'}}>Riassegna a</span>
@@ -1161,7 +1162,7 @@ function DrillRendiconto({sezKey, sezLabel, catNome, scritture, categorie, updat
                   <tr key={(l.id||'x')+'_'+i}>
                     <td style={{whiteSpace:'nowrap'}}>{fmtDate(l.data)}</td>
                     <td>{l.descr}</td>
-                    <td className={'num '+(entrata?'pos':'neg')}>{entrata?'+':'−'}{num2(l.amount)}</td>
+                    <td className={'num '+((invest?(l.inflow):entrata)?'pos':'neg')}>{(invest?(l.inflow):entrata)?'+':'−'}{num2(l.amount)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -2048,7 +2049,9 @@ function buildRendiconto(scritture, categorie){
     const section = sez==='investimento'?'investimento':(sez==='entrata'?'entrata':(sez==='uscita'?'uscita':(inflow?'entrata':'uscita')));
     mesiSet.add(key);
     const cn=cat||'(senza categoria)';
-    acc[section][cn]=acc[section][cn]||{}; acc[section][cn][key]=r2((acc[section][cn][key]||0)+amount);
+    // negli investimenti si nettano acquisti (uscita, +) e disinvestimenti (entrata, −): così un cambio titoli non si somma
+    const val = section==='investimento' ? (inflow?-amount:amount) : amount;
+    acc[section][cn]=acc[section][cn]||{}; acc[section][cn][key]=r2((acc[section][cn][key]||0)+val);
   });
   const mesi=[...mesiSet].sort();
   const sumSec=(o,k)=>r2(Object.values(o).reduce((s,x)=>s+(x[k]||0),0));
