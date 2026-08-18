@@ -356,7 +356,7 @@
     font-weight: 500;
   }
   .form-row .req { color: var(--danger); }
-  input[type=text], input[type=number], input[type=date], input[type=password], select, textarea {
+  input[type=text], input[type=number], input[type=date], input[type=month], input[type=password], select, textarea {
     width: 100%;
     padding: 8px 11px;
     border: 1px solid var(--rule-2);
@@ -1042,6 +1042,7 @@ function saldoRealeConto(cod, scritture){
    così il saldo cassa torna a zero.
    ============================================================ */
 const CONTO_RETTIFICA_DEFAULT = 35;   // RETTIFICHE PER SPESE ANNUALI
+const LBL_RETT = {display:'block',fontSize:12,fontWeight:600,color:'var(--ink-2)',marginBottom:5};
 function fineMese(mk){
   if(!mk) return todayISO();
   const [y,m]=mk.split('-').map(Number);
@@ -4261,23 +4262,25 @@ function PageVariazioni({onAddMany, scritture, saldi, categorie, toast}){
           (Dare {contoByCode[liq]?.nome} · Avere {rettCode?contoByCode[parseInt(rettCode)]?.nome:'conto rettifiche'}),
           scalando quanto già rettificato.
         </p>
-        <div style={{display:'flex',gap:14,alignItems:'flex-end',flexWrap:'wrap'}}>
-          <div className="form-row" style={{maxWidth:170}}>
-            <label>Mese</label>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(190px,1fr))',gap:12,alignItems:'end'}}>
+          <div>
+            <label style={LBL_RETT}>Mese</label>
             <input type="month" value={mkRett} onChange={e=>{setProposta(null);setMkRett(e.target.value);}}/>
           </div>
-          <div className="form-row" style={{minWidth:230}}>
-            <label>Conto di rettifica (Avere)</label>
+          <div>
+            <label style={LBL_RETT}>Conto di rettifica (Avere)</label>
             <ContoSelect value={rettCode} onChange={v=>{setProposta(null);setRettCode(v);}} filter={c=>c.categoria==='RICAVI'||c.categoria==='COSTI'||c.categoria==='RICAVI/COSTI'}/>
           </div>
-          <div className="form-row" style={{minWidth:200,flex:1}}>
-            <label>Descrizione</label>
+          <div>
+            <label style={LBL_RETT}>Descrizione</label>
             <input type="text" value={descrRett} onChange={e=>{setProposta(null);setDescrRett(e.target.value);}} placeholder="Rettifiche spese cassa"/>
           </div>
-          <div className="form-row" style={{minWidth:180}}>
-            <label>Categoria rendiconto</label>
+          <div>
+            <label style={LBL_RETT}>Categoria rendiconto</label>
             <CatSelect value={catRett} onChange={v=>{setProposta(null);setCatRett(v);}} categorie={categorie} sezioni={['entrata']}/>
           </div>
+        </div>
+        <div style={{display:'flex',justifyContent:'flex-end',marginTop:12}}>
           <button className="btn accent" onClick={proponiRettifica} disabled={rett.residuo<=0.004}>
             ⇢ Proponi rettifica {mkLabel(mkRett)}
           </button>
