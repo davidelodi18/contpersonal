@@ -1036,6 +1036,47 @@ function saldoRealeConto(cod, scritture){
 }
 
 /* ============================================================
+   RETTIFICA AUTOMATICA SPESE CASSA
+   Le uscite di cassa non hanno un'entrata tracciata: a fine mese
+   si reintegra la cassa con contropartita il conto rettifiche,
+   così il saldo cassa torna a zero.
+   ============================================================ */
+const CONTO_RETTIFICA_DEFAULT = 35;   // RETTIFICHE PER SPESE ANNUALI
+function fineMese(mk){
+  if(!mk) return todayISO();
+  const [y,m]=mk.split('-').map(Number);
+  return new Date(Date.UTC(y,m,0)).toISOString().slice(0,10);
+}
+function mkLabel(mk){
+  if(!mk) return '';
+  const [y,m]=mk.split('-');
+  const nm=MESI_ORD[parseInt(m,10)-1]||m;
+  return nm.charAt(0).toUpperCase()+nm.slice(1)+' '+y;
+}
+/* Uscite del conto liquidità nel mese, al netto di quanto già rettificato.
+   Una scrittura che contiene il conto rettifiche è considerata "rettifica":
+   il suo Dare sulla cassa riduce il residuo, e le sue righe non entrano tra le uscite. */
+function calcRettificaCassa(scritture, liq, rettCode, mk){
+  let uscite=0, rettificato=0; const dettaglio=[];
+  (scritture||[]).forEach(s=>{
+    if((s.data||'').slice(0,7)!==mk) return;
+    const righe=s.righe||[];
+    const isRett = rettCode && righe.some(r=>r.c===rettCode);
+    righe.forEach(r=>{
+      if(r.c!==liq) return;
+      if(isRett){ rettificato = r2(rettificato + (r.d||0) - (r.a||0)); return; }
+      if((r.a||0)>0){
+        uscite = r2(uscite + r.a);
+        const contro = righe.find(x=>x.c!==liq && (x.d||0)>0);
+        dettaglio.push({k:(s.id||'')+'_'+r.c, data:s.data, descr:s.descr, imp:r.a, contro:contro?contro.c:null});
+      }
+    });
+  });
+  dettaglio.sort((a,b)=>(a.data||'').localeCompare(b.data||''));
+  return {uscite, rettificato, residuo:r2(uscite-rettificato), dettaglio};
+}
+
+/* ============================================================
    COMPONENTI BASE
    ============================================================ */
 function Kpi({label,value,hint,accent,neg}){
@@ -1123,11 +1164,10 @@ function DrillRendiconto({sezKey, sezLabel, catNome, scritture, categorie, updat
     const section = sez==='investimento'?'investimento':(sez==='entrata'?'entrata':(sez==='uscita'?'uscita':(inflow?'entrata':'uscita')));
     const cn=cat||'(senza categoria)';
     if(section!==sezKey || cn!==catNome) return;
-    lines.push({id:s.id,data:s.data,descr:s.descr,amount, signed: sezKey==='investimento'?(inflow?-amount:amount):amount, inflow});
+    lines.push({id:s.id,data:s.data,descr:s.descr,amount});
   });
   lines.sort((a,b)=>(a.data||'').localeCompare(b.data||''));
-  const invest = sezKey==='investimento';
-  const tot=r2(lines.reduce((s,l)=>s+(invest?l.signed:l.amount),0));
+  const tot=r2(lines.reduce((s,l)=>s+l.amount,0));
   const entrata = sezKey==='entrata';
   const view=[...lines].reverse();
   return (
@@ -1140,7 +1180,7 @@ function DrillRendiconto({sezKey, sezLabel, catNome, scritture, categorie, updat
         <div className="modal-body" style={{paddingTop:0}}>
           <div style={{display:'flex',gap:18,margin:'4px 0 14px',fontSize:13,color:'var(--ink-2)'}}>
             <span>{sezLabel}</span>
-            <span style={{marginLeft:'auto'}}>Totale <b className={(invest?tot>=0:entrata)?'pos':'neg'}>{(invest?tot>=0:entrata)?'+':'−'}{num2(Math.abs(tot))}</b></span>
+            <span style={{marginLeft:'auto'}}>Totale <b className={entrata?'pos':'neg'}>{entrata?'+':'−'}{num2(tot)}</b></span>
           </div>
           {updateScritture && lines.length>0 && <div style={{background:'var(--panel-2)',borderRadius:6,padding:'10px 12px',marginBottom:14,display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
             <span style={{fontSize:12.5,color:'var(--ink-2)'}}>Riassegna a</span>
@@ -1162,7 +1202,7 @@ function DrillRendiconto({sezKey, sezLabel, catNome, scritture, categorie, updat
                   <tr key={(l.id||'x')+'_'+i}>
                     <td style={{whiteSpace:'nowrap'}}>{fmtDate(l.data)}</td>
                     <td>{l.descr}</td>
-                    <td className={'num '+((invest?(l.inflow):entrata)?'pos':'neg')}>{(invest?(l.inflow):entrata)?'+':'−'}{num2(l.amount)}</td>
+                    <td className={'num '+(entrata?'pos':'neg')}>{entrata?'+':'−'}{num2(l.amount)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -2049,9 +2089,7 @@ function buildRendiconto(scritture, categorie){
     const section = sez==='investimento'?'investimento':(sez==='entrata'?'entrata':(sez==='uscita'?'uscita':(inflow?'entrata':'uscita')));
     mesiSet.add(key);
     const cn=cat||'(senza categoria)';
-    // negli investimenti si nettano acquisti (uscita, +) e disinvestimenti (entrata, −): così un cambio titoli non si somma
-    const val = section==='investimento' ? (inflow?-amount:amount) : amount;
-    acc[section][cn]=acc[section][cn]||{}; acc[section][cn][key]=r2((acc[section][cn][key]||0)+val);
+    acc[section][cn]=acc[section][cn]||{}; acc[section][cn][key]=r2((acc[section][cn][key]||0)+amount);
   });
   const mesi=[...mesiSet].sort();
   const sumSec=(o,k)=>r2(Object.values(o).reduce((s,x)=>s+(x[k]||0),0));
@@ -3477,9 +3515,6 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
   const [sommaCons,setSommaCons]=useState(false);
   const [statoConti,setStatoConti]=useState(false);
   const [pianoCassa,setPianoCassa]=useState(false);
-  const [soloNuove,setSoloNuove]=useState(false);
-  const [soloMacro,setSoloMacro]=useState(false);
-  const [fConto,setFConto]=useState('');
 
   const b = draft;
   const salvato = sel ? budgets[sel] : null;
@@ -3597,42 +3632,31 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
 
   function exportXls(){
     if(!window.XLSX){ toast('Libreria Excel non caricata','error'); return; }
-    const head=soloMacro?['Macroarea','Budget','Consuntivo','Scostamento','Tot. atteso']
-                        :['Voce','Natura','Conti','Budget','Consuntivo','Scostamento','Tot. atteso','Cassa','Note'];
-    const sub=(soloNuove||fConto)?'  (filtrato)':'';
-    const aoa=[[b.nome+sub],[b.da||b.a?`Periodo ${b.da||'inizio'} → ${b.a||'oggi'}`:'Periodo: tutto'],[],head];
+    const head=['Voce','Natura','Conti','Budget','Consuntivo','Scostamento','Tot. atteso','Cassa','Note'];
+    const aoa=[[b.nome],[b.da||b.a?`Periodo ${b.da||'inizio'} → ${b.a||'oggi'}`:'Periodo: tutto'],[],head];
     NATURE.forEach(n=>{
-      const rr=righeVis.filter(r=>r.natura===n.v); if(!rr.length) return;
-      if(soloMacro){
-        const tb=r2(rr.reduce((s,r)=>s+r.budg,0)),tc=r2(rr.reduce((s,r)=>s+r.cons,0)),ta=r2(rr.reduce((s,r)=>s+r.atteso,0));
-        aoa.push([n.l,tb,tc,r2(tc-tb),ta]);
-      } else {
-        aoa.push([n.l.toUpperCase()]);
-        rr.forEach(r=>aoa.push([r.descr,n.l,(r.conti||[]).map(c=>contoByCode[c]?.nome||c).join(', '),r.budg,r.cons,r.scost,r.atteso,r.cassa?contoByCode[parseInt(r.cassa)]?.nome:'',r.note||'']));
-      }
+      const rr=calc.righe.filter(r=>r.natura===n.v); if(!rr.length) return;
+      aoa.push([n.l.toUpperCase()]);
+      rr.forEach(r=>aoa.push([r.descr,n.l,(r.conti||[]).map(c=>contoByCode[c]?.nome||c).join(', '),r.budg,r.cons,r.scost,r.atteso,r.cassa?contoByCode[parseInt(r.cassa)]?.nome:'',r.note||'']));
     });
     aoa.push([]);
-    if(soloMacro){
-      aoa.push(['RISULTATO',totVis.resBudg,totVis.resCons,totVis.scost,totVis.resAtt]);
-    } else {
-      aoa.push(['TOTALE RICAVI','','',totVis.ricBudg,totVis.ricCons,r2(totVis.ricCons-totVis.ricBudg),totVis.ricAtt,'','']);
-      aoa.push(['TOTALE COSTI','','',totVis.cosBudg,totVis.cosCons,r2(totVis.cosCons-totVis.cosBudg),totVis.cosAtt,'','']);
-      aoa.push(['RISULTATO','','',totVis.resBudg,totVis.resCons,totVis.scost,totVis.resAtt,'','']);
-    }
+    aoa.push(['TOTALE RICAVI','','',calc.tot.ricBudg,calc.tot.ricCons,r2(calc.tot.ricCons-calc.tot.ricBudg),calc.tot.ricAtt,'','']);
+    aoa.push(['TOTALE COSTI','','',calc.tot.cosBudg,calc.tot.cosCons,r2(calc.tot.cosCons-calc.tot.cosBudg),calc.tot.cosAtt,'','']);
+    aoa.push(['RISULTATO','','',calc.tot.resBudg,calc.tot.resCons,calc.tot.scost,calc.tot.resAtt,'','']);
     const wb=XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(aoa),'Budget');
-    if(!soloMacro && cassaPlan.length){
+    if(cassaPlan.length){
       const ca=[['PIANO DI CASSA PREVISIONALE — '+b.nome],[],['Conto','Saldo attuale','Entrate previste','Uscite previste','Saldo previsto']];
       cassaPlan.forEach(p=>ca.push([p.nome,p.attuale,p.entrate,p.uscite,p.previsto]));
       XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(ca),'Piano di cassa');
     }
-    if(!soloMacro && esposizione.eventi.length){
+    if(esposizione.eventi.length){
       const ea=[['ESPOSIZIONE — '+b.nome],[],['Data','Voce','Conto','Flusso','Saldo dopo']];
       esposizione.eventi.forEach(e=>ea.push([e.senzaData?'(senza data)':e.data,e.descr,e.nome,e.seg,e.saldoDopo]));
       ea.push([]); ea.push(['MINIMI PER CONTO']); esposizione.conti.forEach(c=>ea.push([c.nome,'iniziale '+num2(c.iniziale),'minimo '+num2(c.minimo),'finale '+num2(c.finale)]));
       XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(ea),'Esposizione');
     }
-    XLSX.writeFile(wb,'Budget_'+(b.nome||'').replace(/[^\w]+/g,'_')+(soloMacro?'_macro':'')+'.xlsx');
+    XLSX.writeFile(wb,'Budget_'+(b.nome||'').replace(/[^\w]+/g,'_')+'.xlsx');
     toast('Export Excel completato','success');
   }
 
@@ -3650,32 +3674,27 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
     const showC=mostraCons;
     const headRow=showC?['Voce','Budget','Consuntivo','Scostam.','Tot. atteso']:['Voce','Budget'];
     const body=[];
-    NATURE.forEach(n=>{ const rr=righeVis.filter(r=>r.natura===n.v); if(!rr.length) return;
-      const tb=r2(rr.reduce((s,r)=>s+r.budg,0)), tc=r2(rr.reduce((s,r)=>s+r.cons,0)), ta=r2(rr.reduce((s,r)=>s+r.atteso,0));
-      if(soloMacro){
-        const tr=[{content:n.l,styles:{fontStyle:'bold',fillColor:SUB}},{content:num2(tb),styles:{fontStyle:'bold',fillColor:SUB}}];
-        if(showC){ tr.push({content:num2(tc),styles:{fontStyle:'bold',fillColor:SUB}}); tr.push({content:num2(r2(tc-tb)),styles:{fontStyle:'bold',fillColor:SUB}}); tr.push({content:num2(ta),styles:{fontStyle:'bold',fillColor:SUB}}); }
-        body.push(tr); return;
-      }
+    NATURE.forEach(n=>{ const rr=calc.righe.filter(r=>r.natura===n.v); if(!rr.length) return;
       body.push([{content:n.l.toUpperCase(),colSpan:headRow.length,styles:{fontStyle:'bold',fillColor:SUB}}]);
       rr.forEach(r=>{ const row=[r.descr+(r.note?'  ('+r.note+')':''),num2(r.budg)]; if(showC){ row.push(num2(r.cons)); row.push((r.scost>0?'+':'')+num2(r.scost)); row.push(num2(r.atteso)); } body.push(row); });
+      const tb=r2(rr.reduce((s,r)=>s+r.budg,0)), tc=r2(rr.reduce((s,r)=>s+r.cons,0)), ta=r2(rr.reduce((s,r)=>s+r.atteso,0));
       const tr=[{content:'Totale '+n.l.toLowerCase(),styles:{fontStyle:'bold'}},{content:num2(tb),styles:{fontStyle:'bold'}}];
       if(showC){ tr.push({content:num2(tc),styles:{fontStyle:'bold'}}); tr.push({content:num2(r2(tc-tb)),styles:{fontStyle:'bold'}}); tr.push({content:num2(ta),styles:{fontStyle:'bold'}}); }
       body.push(tr);
     });
-    const rres=[{content:'RISULTATO (ricavi − costi)',styles:{fontStyle:'bold',fillColor:TOT}},{content:num2(totVis.resBudg),styles:{fontStyle:'bold',fillColor:TOT}}];
-    if(showC){ rres.push({content:num2(totVis.resCons),styles:{fontStyle:'bold',fillColor:TOT}}); rres.push({content:(totVis.scost>0?'+':'')+num2(totVis.scost),styles:{fontStyle:'bold',fillColor:TOT}}); rres.push({content:num2(totVis.resAtt),styles:{fontStyle:'bold',fillColor:TOT}}); }
+    const rres=[{content:'RISULTATO (ricavi − costi)',styles:{fontStyle:'bold',fillColor:TOT}},{content:num2(calc.tot.resBudg),styles:{fontStyle:'bold',fillColor:TOT}}];
+    if(showC){ rres.push({content:num2(calc.tot.resCons),styles:{fontStyle:'bold',fillColor:TOT}}); rres.push({content:(calc.tot.scost>0?'+':'')+num2(calc.tot.scost),styles:{fontStyle:'bold',fillColor:TOT}}); rres.push({content:num2(calc.tot.resAtt),styles:{fontStyle:'bold',fillColor:TOT}}); }
     body.push(rres);
     const colStyles=showC?{1:{halign:'right'},2:{halign:'right'},3:{halign:'right'},4:{halign:'right'}}:{1:{halign:'right'}};
     doc.autoTable({startY:37,head:[headRow],body,styles:{fontSize:8.5,cellPadding:1.6},headStyles:{fillColor:HEAD},columnStyles:colStyles});
 
-    if(!soloMacro && cassaPlan.length){
+    if(cassaPlan.length){
       let y=doc.lastAutoTable.finalY+10; if(y>250){ doc.addPage(); y=20; }
       doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.text('Piano di cassa previsionale',14,y); y+=3;
       const cbody=cassaPlan.map(p=>[p.nome,num2(p.attuale),'+'+num2(p.entrate),'−'+num2(p.uscite),num2(p.previsto)]);
       doc.autoTable({startY:y+2,head:[['Conto','Saldo attuale','Entrate','Uscite','Saldo previsto']],body:cbody,styles:{fontSize:8.5,cellPadding:1.6},headStyles:{fillColor:HEAD},columnStyles:{1:{halign:'right'},2:{halign:'right'},3:{halign:'right'},4:{halign:'right'}}});
     }
-    if(!soloMacro && esposizione.eventi.length){
+    if(esposizione.eventi.length){
       let y=doc.lastAutoTable.finalY+10; if(y>240){ doc.addPage(); y=20; }
       doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.text('Esposizione — proiezione cronologica',14,y);
       const ebody=esposizione.eventi.map(e=>[e.senzaData?'—':fmtDate(e.data),e.descr,e.nome,(e.seg>0?'+':'')+num2(e.seg),num2(e.saldoDopo)]);
@@ -3687,25 +3706,6 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
   }
 
   const nCol = mostraCons?7:4;
-
-  // conti presenti nel budget, per il filtro
-  const contiBudget=[...new Set((b?.voci||[]).flatMap(v=>v.conti||[]))].map(c=>({cod:c,nome:contoByCode[c]?.nome||('#'+c)})).sort((a,b)=>a.nome.localeCompare(b.nome,'it'));
-  // righe visibili in base ai filtri (solo voci con forecast / conto specifico)
-  const righeVis=calc.righe.filter(r=>{
-    if(soloNuove && !(parseFloat(r.importo)||0)) return false;
-    if(fConto && !(r.conti||[]).includes(parseInt(fConto))) return false;
-    return true;
-  });
-  function totOf(rr){
-    const somma=(nat,f)=>r2(rr.filter(r=>r.natura===nat).reduce((s,r)=>s+f(r),0));
-    const t={ricBudg:somma('ricavo',r=>r.budg),ricCons:somma('ricavo',r=>r.cons),ricAtt:somma('ricavo',r=>r.atteso),
-      cosBudg:somma('costo',r=>r.budg),cosCons:somma('costo',r=>r.cons),cosAtt:somma('costo',r=>r.atteso),
-      patBudg:somma('patrimoniale',r=>r.budg),patCons:somma('patrimoniale',r=>r.cons),patAtt:somma('patrimoniale',r=>r.atteso)};
-    t.resBudg=r2(t.ricBudg-t.cosBudg); t.resCons=r2(t.ricCons-t.cosCons); t.resAtt=r2(t.ricAtt-t.cosAtt); t.scost=r2(t.resCons-t.resBudg);
-    return t;
-  }
-  const totVis=totOf(righeVis);
-  const filtroAttivo = soloNuove || !!fConto;
 
   /* ============ SCHERMATA INIZIALE: elenco budget ============ */
   if(!sel || !draft){
@@ -3779,29 +3779,12 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
         <button className="btn ghost sm" onClick={()=>setStatoConti(v=>!v)}>{statoConti?'Nascondi':'Mostra'} stato conti</button>
       </div>
 
-      <div className="filters" style={{marginBottom:16}}>
-        <label style={{display:'flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
-          <input type="checkbox" checked={soloNuove} onChange={e=>setSoloNuove(e.target.checked)}/> Solo voci con forecast
-        </label>
-        <label style={{display:'flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
-          <input type="checkbox" checked={soloMacro} onChange={e=>setSoloMacro(e.target.checked)}/> Solo macro
-        </label>
-        <span className="label">Conto</span>
-        <select value={fConto} onChange={e=>setFConto(e.target.value)}>
-          <option value="">Tutti</option>
-          {contiBudget.map(c=><option key={c.cod} value={c.cod}>{c.nome}</option>)}
-        </select>
-        {filtroAttivo && <button className="btn ghost sm" onClick={()=>{setSoloNuove(false);setFConto('');}}>Azzera filtri</button>}
-        <div style={{flex:1}}></div>
-        <span style={{fontSize:12,color:'var(--ink-3)'}}>{righeVis.length} di {calc.righe.length} voci</span>
-      </div>
-
       <div className="kpi-grid" style={{marginBottom:18}}>
-        <Kpi label="Ricavi" value={eur(totVis.ricBudg)} hint={mostraCons?`Consuntivo ${eur(totVis.ricCons)}`:null}/>
-        <Kpi label="Costi" value={eur(totVis.cosBudg)} hint={mostraCons?`Consuntivo ${eur(totVis.cosCons)}`:null}/>
-        <Kpi label="Risultato" value={eur(totVis.resBudg)} neg={totVis.resBudg<0} hint={mostraCons?`Consuntivo ${eur(totVis.resCons)}`:null} accent/>
-        {mostraCons && <Kpi label="Risultato atteso" value={eur(totVis.resAtt)} neg={totVis.resAtt<0} hint="Consuntivo + forecast"/>}
-        {mostraCons && <Kpi label="Scostamento risultato" value={(totVis.scost>0?'+':'')+eur(totVis.scost)} neg={totVis.scost<0}/>}
+        <Kpi label="Ricavi" value={eur(calc.tot.ricBudg)} hint={mostraCons?`Consuntivo ${eur(calc.tot.ricCons)}`:null}/>
+        <Kpi label="Costi" value={eur(calc.tot.cosBudg)} hint={mostraCons?`Consuntivo ${eur(calc.tot.cosCons)}`:null}/>
+        <Kpi label="Risultato" value={eur(calc.tot.resBudg)} neg={calc.tot.resBudg<0} hint={mostraCons?`Consuntivo ${eur(calc.tot.resCons)}`:null} accent/>
+        {mostraCons && <Kpi label="Risultato atteso" value={eur(calc.tot.resAtt)} neg={calc.tot.resAtt<0} hint="Consuntivo + forecast"/>}
+        {mostraCons && <Kpi label="Scostamento risultato" value={(calc.tot.scost>0?'+':'')+eur(calc.tot.scost)} neg={calc.tot.scost<0}/>}
       </div>
 
       {statoConti && <div className="card" style={{marginBottom:18}}>
@@ -3878,21 +3861,12 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
           </tr></thead>
           <tbody>
             {(b.voci||[]).length===0 && <tr><td colSpan={nCol} className="empty-state">Nessuna voce. Aggiungine una qui sotto.</td></tr>}
-            {righeVis.length===0 && (b.voci||[]).length>0 && <tr><td colSpan={nCol} className="empty-state">Nessuna voce con i filtri attivi.</td></tr>}
             {NATURE.map(n=>{
-              const rr=righeVis.filter(r=>r.natura===n.v);
+              const rr=calc.righe.filter(r=>r.natura===n.v);
               if(!rr.length) return null;
               const tb=r2(rr.reduce((s,r)=>s+r.budg,0)), tc=r2(rr.reduce((s,r)=>s+r.cons,0)), ta=r2(rr.reduce((s,r)=>s+r.atteso,0));
               return (
                 <React.Fragment key={n.v}>
-                  {soloMacro
-                    ? <tr className="rf-tot"><td colSpan={2} style={{fontWeight:600}}>{n.l} <span style={{fontWeight:400,color:'var(--ink-3)',fontSize:12}}>({rr.length})</span></td>
-                        <td className="num" style={{fontWeight:600}}>{num2(tb)}</td>
-                        {mostraCons && <td className="num" style={{fontWeight:600}}>{num2(tc)}</td>}
-                        {mostraCons && <td className="num" style={{fontWeight:600}}>{num2(r2(tc-tb))}</td>}
-                        {mostraCons && <td className="num" style={{fontWeight:600}}>{num2(ta)}</td>}
-                        <td></td></tr>
-                    : <>
                   <tr className="gj-head"><td colSpan={nCol} style={{fontWeight:600}}>{n.l}</td></tr>
                   {rr.map(r=>{
                     const favorevole = r.natura==='ricavo' ? r.scost>=0 : r.scost<=0;
@@ -3932,15 +3906,14 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
                     {mostraCons && <td className="num" style={{fontWeight:600}}>{num2(r2(tc-tb))}</td>}
                     {mostraCons && <td className="num" style={{fontWeight:600}}>{num2(ta)}</td>}
                     <td></td></tr>
-                    </>}
                 </React.Fragment>
               );
             })}
             <tr className="rf-tot strong"><td colSpan={2} style={{fontWeight:700}}>RISULTATO (ricavi − costi)</td>
-              <td className="num" style={{fontWeight:700}}>{num2(totVis.resBudg)}</td>
-              {mostraCons && <td className="num" style={{fontWeight:700}}>{num2(totVis.resCons)}</td>}
-              {mostraCons && <td className={'num '+(totVis.scost<0?'neg':'pos')} style={{fontWeight:700}}>{totVis.scost>0?'+':''}{num2(totVis.scost)}</td>}
-              {mostraCons && <td className="num" style={{fontWeight:700}}>{num2(totVis.resAtt)}</td>}
+              <td className="num" style={{fontWeight:700}}>{num2(calc.tot.resBudg)}</td>
+              {mostraCons && <td className="num" style={{fontWeight:700}}>{num2(calc.tot.resCons)}</td>}
+              {mostraCons && <td className={'num '+(calc.tot.scost<0?'neg':'pos')} style={{fontWeight:700}}>{calc.tot.scost>0?'+':''}{num2(calc.tot.scost)}</td>}
+              {mostraCons && <td className="num" style={{fontWeight:700}}>{num2(calc.tot.resAtt)}</td>}
               <td></td></tr>
           </tbody>
         </table>
@@ -4188,9 +4161,14 @@ function PageCategorie({categorie, setCategorie, scritture, updateScritture, map
    Righe libere (descrizione, importo con segno, conto contabile,
    categoria RF) -> proposta di scrittura -> conferma manuale.
    ============================================================ */
-function PageVariazioni({onAddMany, saldi, categorie, toast}){
+function PageVariazioni({onAddMany, scritture, saldi, categorie, toast}){
   const [liq,setLiq]=useState(3);                 // conto liquidità: default CASSA
   const [dataDef,setDataDef]=useState(todayISO());
+  // --- rettifica automatica spese cassa ---
+  const [mkRett,setMkRett]=useState(()=>todayISO().slice(0,7));
+  const [rettCode,setRettCode]=useState(()=>contoByCode[CONTO_RETTIFICA_DEFAULT]?CONTO_RETTIFICA_DEFAULT:'');
+  const [descrRett,setDescrRett]=useState('Rettifiche spese cassa');
+  const [catRett,setCatRett]=useState('');
   const newRow=()=>({k:uid(), data:dataDef, descr:'', importo:'', conto:'', cat:''});
   const [rows,setRows]=useState(()=>[{k:uid(),data:todayISO(),descr:'',importo:'',conto:'',cat:''}]);
   const [proposta,setProposta]=useState(null);    // null finché non si preme "Proponi"
@@ -4224,6 +4202,28 @@ function PageVariazioni({onAddMany, saldi, categorie, toast}){
     });
     setProposta(scrit);
   }
+  const rett = useMemo(
+    ()=>calcRettificaCassa(scritture, liq, parseInt(rettCode)||0, mkRett),
+    [scritture, liq, rettCode, mkRett]
+  );
+
+  function proponiRettifica(){
+    const cc=parseInt(rettCode);
+    if(!cc){ toast('Seleziona il conto di rettifica','error'); return; }
+    if(rett.residuo<=0.004){
+      toast(rett.uscite>0.004?'Il mese è già rettificato per intero':'Nessuna uscita di cassa in questo mese','error');
+      return;
+    }
+    const imp=rett.residuo, data=fineMese(mkRett);
+    setProposta([{
+      id:uid(), data,
+      descr:(descrRett||'').trim()||'Rettifiche spese cassa',
+      righe:[{c:liq,d:imp,a:0},{c:cc,d:0,a:imp}],
+      origine:'manuale', tipo:'liquidita', cat:(catRett||'').trim(),
+      _pos:true, _imp:imp, _cc:cc
+    }]);
+  }
+
   function conferma(){
     if(!proposta||!proposta.length) return;
     const puliti=proposta.map(s=>{ const {_pos,_imp,_cc,...rest}=s; return rest; });
@@ -4252,6 +4252,68 @@ function PageVariazioni({onAddMany, saldi, categorie, toast}){
           Saldo {contoByCode[liq]?.nome}: <b>{eur(saldoAtt)}</b><br/>
           Variazione proposta: <b style={{color:totale>=0?'var(--success)':'var(--danger)'}}>{totale>=0?'+':''}{num2(totale)}</b> → saldo <b>{eur(r2(saldoAtt+totale))}</b>
         </div>
+      </div>
+
+      <div className="card" style={{marginBottom:22,borderColor:'var(--accent)'}}>
+        <div className="card-title">Rettifica automatica spese {contoByCode[liq]?.nome?.toLowerCase()||'cassa'}</div>
+        <p style={{color:'var(--ink-2)',fontSize:12.5,marginTop:0}}>
+          Il sistema somma le uscite del mese sul conto liquidità e propone la scrittura di reintegro
+          (Dare {contoByCode[liq]?.nome} · Avere {rettCode?contoByCode[parseInt(rettCode)]?.nome:'conto rettifiche'}),
+          scalando quanto già rettificato.
+        </p>
+        <div style={{display:'flex',gap:14,alignItems:'flex-end',flexWrap:'wrap'}}>
+          <div className="form-row" style={{maxWidth:170}}>
+            <label>Mese</label>
+            <input type="month" value={mkRett} onChange={e=>{setProposta(null);setMkRett(e.target.value);}}/>
+          </div>
+          <div className="form-row" style={{minWidth:230}}>
+            <label>Conto di rettifica (Avere)</label>
+            <ContoSelect value={rettCode} onChange={v=>{setProposta(null);setRettCode(v);}} filter={c=>c.categoria==='RICAVI'||c.categoria==='COSTI'||c.categoria==='RICAVI/COSTI'}/>
+          </div>
+          <div className="form-row" style={{minWidth:200,flex:1}}>
+            <label>Descrizione</label>
+            <input type="text" value={descrRett} onChange={e=>{setProposta(null);setDescrRett(e.target.value);}} placeholder="Rettifiche spese cassa"/>
+          </div>
+          <div className="form-row" style={{minWidth:180}}>
+            <label>Categoria rendiconto</label>
+            <CatSelect value={catRett} onChange={v=>{setProposta(null);setCatRett(v);}} categorie={categorie} sezioni={['entrata']}/>
+          </div>
+          <button className="btn accent" onClick={proponiRettifica} disabled={rett.residuo<=0.004}>
+            ⇢ Proponi rettifica {mkLabel(mkRett)}
+          </button>
+        </div>
+
+        <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:14}}>
+          <div style={{flex:1,minWidth:150,background:'var(--panel-2)',borderRadius:6,padding:'10px 14px'}}>
+            <div style={{fontSize:11.5,color:'var(--ink-3)',textTransform:'uppercase',letterSpacing:.4}}>Uscite del mese</div>
+            <div style={{fontSize:17,fontWeight:600}}>{eur(rett.uscite)}</div>
+          </div>
+          <div style={{flex:1,minWidth:150,background:'var(--panel-2)',borderRadius:6,padding:'10px 14px'}}>
+            <div style={{fontSize:11.5,color:'var(--ink-3)',textTransform:'uppercase',letterSpacing:.4}}>Già rettificato</div>
+            <div style={{fontSize:17,fontWeight:600}}>{eur(rett.rettificato)}</div>
+          </div>
+          <div style={{flex:1,minWidth:150,background:'var(--panel-2)',borderRadius:6,padding:'10px 14px'}}>
+            <div style={{fontSize:11.5,color:'var(--ink-3)',textTransform:'uppercase',letterSpacing:.4}}>Da rettificare</div>
+            <div style={{fontSize:17,fontWeight:600,color:rett.residuo>0.004?'var(--accent)':'var(--ink-3)'}}>{eur(rett.residuo)}</div>
+          </div>
+        </div>
+
+        {rett.dettaglio.length>0 && <div className="tbl-wrap" style={{marginTop:14}}>
+          <table className="tbl">
+            <thead><tr><th style={{width:110}}>Data</th><th>Uscita di cassa</th><th>Conto costo</th><th className="num" style={{width:110}}>Importo</th></tr></thead>
+            <tbody>
+              {rett.dettaglio.map(r=>(
+                <tr key={r.k}><td>{fmtDate(r.data)}</td><td>{r.descr}</td>
+                  <td style={{fontSize:12}}>{r.contro?(contoByCode[r.contro]?.nome||('#'+r.contro)):'—'}</td>
+                  <td className="num">{num2(r.imp)}</td></tr>
+              ))}
+            </tbody>
+            <tfoot><tr><td colSpan={3} style={{fontWeight:600}}>Totale uscite {mkLabel(mkRett)}</td><td className="num" style={{fontWeight:600}}>{num2(rett.uscite)}</td></tr></tfoot>
+          </table>
+        </div>}
+        {rett.dettaglio.length===0 && <div style={{marginTop:12,fontSize:12.5,color:'var(--ink-3)',fontStyle:'italic'}}>
+          Nessuna uscita da rettificare su {contoByCode[liq]?.nome} in {mkLabel(mkRett)}.
+        </div>}
       </div>
 
       <div className="tbl-wrap">
@@ -4529,7 +4591,7 @@ function App({authUser, onLogout}){
           {page==='snapshot' && <PageSnapshot scritture={scritture}/>}
           {page==='chiusura' && <PageChiusura scritture={scritture} categorie={categorie} toast={showToast}/>}
           {page==='nuova' && <PageNuova onAdd={addScrittura} toast={showToast} categorie={categorie}/>}
-          {page==='variazioni' && <PageVariazioni onAddMany={addScritture} saldi={saldi} categorie={categorie} toast={showToast}/>}
+          {page==='variazioni' && <PageVariazioni onAddMany={addScritture} scritture={scritture} saldi={saldi} categorie={categorie} toast={showToast}/>}
           {page==='import' && <PageImport onAddMany={addScritture} mappa={mappa} setMappa={setMappa} categorie={categorie} setCategorie={setCategorie} toast={showToast}/>}
           {page==='giornale' && <PageLibroGiornale scritture={scritture} onUpdate={updateScrittura} onDelete={deleteScrittura} onDeleteMany={deleteScritture} updateScritture={updateScritture} toast={showToast} categorie={categorie}/>}
           {page==='movimenti' && <PageMovimenti scritture={scritture} saldi={saldi}/>}
