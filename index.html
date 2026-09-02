@@ -4591,9 +4591,11 @@ function PageCategorie({categorie, setCategorie, scritture, updateScritture, map
    Righe libere (descrizione, importo con segno, conto contabile,
    categoria RF) -> proposta di scrittura -> conferma manuale.
    ============================================================ */
-function PageVariazioni({onAddMany, scritture, saldi, categorie, toast}){
+function PageVariazioni({onAddMany, scritture, saldi, categorie, toast, bozze, addBozze, updateBozza, updateBozze, deleteBozze}){
   const [liq,setLiq]=useState(3);                 // conto liquidità: default CASSA
   const [dataDef,setDataDef]=useState(todayISO());
+  const [selez,setSelez]=useState({});            // id bozza -> selezionata
+  const [mostraReg,setMostraReg]=useState(false); // mostra anche quelle già registrate
   // --- rettifica automatica spese cassa ---
   const [mkRett,setMkRett]=useState(()=>todayISO().slice(0,7));
   const [rettCode,setRettCode]=useState(()=>contoByCode[CONTO_RETTIFICA_DEFAULT]?CONTO_RETTIFICA_DEFAULT:'');
@@ -4616,6 +4618,54 @@ function PageVariazioni({onAddMany, scritture, saldi, categorie, toast}){
 
   const totale=r2(valide.reduce((s,r)=>s+impOf(r),0));
   const saldoAtt=(saldi[liq]&&saldi[liq].saldo)||0;
+
+  /* ---- variazioni tenute in sospeso ---- */
+  const tutte=(bozze||[]).slice().sort((a,b)=>(a.data||'').localeCompare(b.data||''));
+  const aperte=tutte.filter(b=>b.stato!=='registrata');
+  const registrate=tutte.filter(b=>b.stato==='registrata');
+  const visibili=mostraReg?tutte:aperte;
+  const idSelez=aperte.filter(b=>selez[b.id]).map(b=>b.id);
+  const totAperte=r2(aperte.reduce((s,b)=>s+(Number(b.importo)||0),0));
+  const totSelez=r2(aperte.filter(b=>selez[b.id]).reduce((s,b)=>s+(Number(b.importo)||0),0));
+
+  function salvaInSospeso(){
+    if(!valide.length){ toast('Nessuna riga completa da mettere in sospeso','error'); return; }
+    const list=valide.map(r=>({
+      id:uid(), data:r.data, descr:(r.descr||'').trim(), importo:r2(impOf(r)),
+      conto:parseInt(r.conto), cat:(r.cat||'').trim(), liq, stato:'aperta', creata:todayISO()
+    }));
+    addBozze(list);
+    toast(`${list.length} ${list.length===1?'variazione messa':'variazioni messe'} in sospeso`,'success');
+    resetAll();
+  }
+
+  const scritturaDaBozza = b => {
+    const v=r2(Number(b.importo)||0); const imp=Math.abs(v); const pos=v>0;
+    const cc=parseInt(b.conto); const lq=parseInt(b.liq)||liq;
+    return {
+      id:uid(), data:b.data,
+      descr:(b.descr||'').trim() || (pos?'Variazione cassa in aumento':'Variazione cassa in diminuzione'),
+      righe: pos ? [{c:lq,d:imp,a:0},{c:cc,d:0,a:imp}]
+                 : [{c:cc,d:imp,a:0},{c:lq,d:0,a:imp}],
+      origine:'manuale', tipo:'liquidita', cat:(b.cat||'').trim(),
+      _pos:pos, _imp:imp, _cc:cc, _bozza:b.id
+    };
+  };
+
+  function proponiDaSospeso(ids){
+    const list=aperte.filter(b=>ids.includes(b.id));
+    if(!list.length){ toast('Seleziona almeno una variazione','error'); return; }
+    const incompl=list.filter(b=>!b.data||!b.conto||Math.abs(Number(b.importo)||0)<=0.004);
+    if(incompl.length){ toast(`${incompl.length} variazion${incompl.length===1?'e incompleta':'i incomplete'}: servono data, importo ≠ 0 e conto`,'error'); return; }
+    setProposta(list.map(scritturaDaBozza));
+  }
+
+  function eliminaSospese(ids){
+    if(!ids.length) return;
+    if(!window.confirm(`Eliminare ${ids.length} variazion${ids.length===1?'e':'i'} in sospeso?`)) return;
+    deleteBozze(ids); setSelez({});
+    toast('Variazioni eliminate','success');
+  }
 
   function proponi(){
     if(!valide.length){ toast('Nessuna riga completa (servono importo ≠ 0 e conto)','error'); return; }
@@ -4656,16 +4706,22 @@ function PageVariazioni({onAddMany, scritture, saldi, categorie, toast}){
 
   function conferma(){
     if(!proposta||!proposta.length) return;
-    const puliti=proposta.map(s=>{ const {_pos,_imp,_cc,...rest}=s; return rest; });
+    const puliti=proposta.map(s=>{ const {_pos,_imp,_cc,_bozza,...rest}=s; return rest; });
     onAddMany(puliti);
+    const daMarcare=proposta.filter(s=>s._bozza);
+    if(daMarcare.length && updateBozze){
+      updateBozze(daMarcare.map(s=>({id:s._bozza,patch:{stato:'registrata',scritturaId:s.id,registrata:todayISO()}})));
+    }
+    setSelez({});
     toast(`${puliti.length} ${puliti.length===1?'scrittura registrata':'scritture registrate'}`,'success');
     resetAll();
   }
 
   return (
     <div>
-      <PageHead title="Variazioni cassa" sub="Inserisci le variazioni, poi proponi la scrittura e confermala">
+      <PageHead title="Variazioni cassa" sub={aperte.length?`${aperte.length} in sospeso · ${totAperte>=0?'+':''}${num2(totAperte)}`:"Inserisci le variazioni, tienile in sospeso oppure registrale subito"}>
         <button className="btn ghost" onClick={resetAll}>Svuota</button>
+        <button className="btn ghost" onClick={salvaInSospeso} disabled={!valide.length}>◷ Metti in sospeso</button>
         <button className="btn accent" onClick={proponi} disabled={!valide.length}>⇢ Proponi scritture</button>
       </PageHead>
 
@@ -4791,6 +4847,77 @@ function PageVariazioni({onAddMany, scritture, saldi, categorie, toast}){
         </span>
       </div>
 
+      {tutte.length>0 && <div className="card" style={{marginTop:22}}>
+        <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap',marginBottom:12}}>
+          <div className="card-title" style={{margin:0}}>Variazioni in sospeso · {aperte.length}</div>
+          <span style={{fontSize:12.5,color:'var(--ink-2)'}}>
+            Totale <b style={{color:totAperte>=0?'var(--success)':'var(--danger)'}}>{totAperte>=0?'+':''}{num2(totAperte)}</b>
+            {idSelez.length>0 && <> · selezionate {idSelez.length} <b style={{color:totSelez>=0?'var(--success)':'var(--danger)'}}>{totSelez>=0?'+':''}{num2(totSelez)}</b></>}
+          </span>
+          <div style={{marginLeft:'auto',display:'flex',gap:8,flexWrap:'wrap'}}>
+            {registrate.length>0 && <button className="btn ghost sm" onClick={()=>setMostraReg(v=>!v)}>{mostraReg?'Nascondi registrate':`Mostra registrate (${registrate.length})`}</button>}
+            <button className="btn ghost sm" onClick={()=>eliminaSospese(idSelez)} disabled={!idSelez.length}>✕ Elimina</button>
+            <button className="btn accent sm" onClick={()=>proponiDaSospeso(idSelez)} disabled={!idSelez.length}>⇢ Registra {idSelez.length||''}</button>
+          </div>
+        </div>
+        <div className="tbl-wrap">
+          <table className="tbl">
+            <thead><tr>
+              <th style={{width:34}}>
+                <input type="checkbox"
+                  checked={aperte.length>0 && idSelez.length===aperte.length}
+                  onChange={e=>{ invalida(); const v=e.target.checked; const s={}; if(v) aperte.forEach(b=>{s[b.id]=true;}); setSelez(s); }}/>
+              </th>
+              <th style={{width:130}}>Data</th>
+              <th>Descrizione</th>
+              <th className="num" style={{width:110}}>Importo (±)</th>
+              <th style={{width:200}}>Conto contabile</th>
+              <th style={{width:180}}>Categoria rendiconto</th>
+              <th style={{width:120}}>Conto liquidità</th>
+              <th style={{width:44}}></th>
+            </tr></thead>
+            <tbody>
+              {visibili.map(b=>{
+                const reg=b.stato==='registrata';
+                const v=Number(b.importo)||0;
+                const upd=(k,val)=>{ invalida(); updateBozza(b.id,{[k]:val}); };
+                if(reg) return <tr key={b.id} style={{opacity:.55}}>
+                  <td></td>
+                  <td>{fmtDate(b.data)}</td>
+                  <td>{b.descr||<span style={{color:'var(--ink-3)'}}>—</span>} <span className="pill" style={{marginLeft:6}}>registrata</span></td>
+                  <td className={'num '+(v<0?'neg':'')}>{v>0?'+':''}{num2(v)}</td>
+                  <td style={{fontSize:12}}>{contoByCode[b.conto]?.nome||'—'}</td>
+                  <td style={{fontSize:12}}>{b.cat||'—'}</td>
+                  <td style={{fontSize:12}}>{contoByCode[b.liq]?.nome||'—'}</td>
+                  <td style={{textAlign:'center'}}>
+                    <button onClick={()=>eliminaSospese([b.id])} title="Rimuovi dall'elenco (la scrittura resta)"
+                      style={{background:'transparent',border:'none',color:'var(--ink-3)',fontSize:14,cursor:'pointer'}}>✕</button>
+                  </td>
+                </tr>;
+                const incompleta=!b.data||!b.conto||Math.abs(v)<=0.004;
+                return <tr key={b.id} style={incompleta?{background:'#fbf6e8'}:{}}>
+                  <td><input type="checkbox" checked={!!selez[b.id]} onChange={e=>{ invalida(); setSelez(s=>({...s,[b.id]:e.target.checked})); }}/></td>
+                  <td><input type="date" value={b.data||''} onChange={e=>upd('data',e.target.value)}/></td>
+                  <td><input type="text" value={b.descr||''} onChange={e=>upd('descr',e.target.value)} placeholder="Descrizione" style={{minWidth:170}}/></td>
+                  <td className="num"><input type="number" step="0.01" value={b.importo} onChange={e=>upd('importo',parseFloat(e.target.value)||0)}
+                    style={{textAlign:'right',color:v===0?undefined:(v>0?'var(--success)':'var(--danger)'),fontWeight:v===0?400:600}}/></td>
+                  <td><ContoSelect value={b.conto} onChange={val=>upd('conto',parseInt(val)||'')} filter={c=>c.categoria==='COSTI'||c.categoria==='RICAVI'||c.categoria==='RICAVI/COSTI'}/></td>
+                  <td><CatSelect value={b.cat||''} onChange={val=>upd('cat',val)} categorie={categorie} sezioni={v>=0?['entrata']:['uscita','investimento']} style={{fontSize:12}}/></td>
+                  <td><ContoSelect value={b.liq} onChange={val=>upd('liq',parseInt(val)||liq)} filter={c=>c.categoria==='DISP. LIQUIDE'}/></td>
+                  <td style={{textAlign:'center'}}>
+                    <button onClick={()=>eliminaSospese([b.id])} title="Elimina variazione"
+                      style={{background:'transparent',border:'none',color:'var(--danger)',fontSize:14,cursor:'pointer'}}>✕</button>
+                  </td>
+                </tr>;
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div style={{fontSize:12,color:'var(--ink-3)',marginTop:10,fontStyle:'italic'}}>
+          Queste variazioni restano salvate finché non le registri: puoi modificarle qui, anche a distanza di giorni. Seleziona quelle da contabilizzare e premi Registra per generare le scritture in partita doppia.
+        </div>
+      </div>}
+
       {proposta && <div className="card" style={{marginTop:18,borderColor:'var(--accent)'}}>
         <div className="card-title">Scritture proposte · {proposta.length}</div>
         <p style={{color:'var(--ink-2)',fontSize:12.5,marginTop:0}}>Niente è ancora registrato. Controlla e conferma.</p>
@@ -4864,6 +4991,7 @@ function App({authUser, onLogout}){
   const [cespiti,setCespiti]=useState([]);
   const [conti,setContiState]=useState(CONTI);
   const [saldiIni,setSaldiIniState]=useState(()=>({...SALDI_INIZIALI}));
+  const [bozze,setBozzeState]=useState([]);
   const [mappa,setMappaState]=useState({});
   const [categorie,setCategorieState]=useState(()=>{ const c=seedCategorie(); setCatNames(c); return c; });
   const [budget,setBudgetState]=useState({});
@@ -4900,12 +5028,14 @@ function App({authUser, onLogout}){
       catref.on('value',snap=>{ const v=snap.val(); if(v==null){ catref.set(seedCategorie()); return; } const arr=Array.isArray(v)?v.filter(Boolean):Object.values(v); setCatNames(arr); setCategorieState(arr); });
       db.ref('budget').on('value',snap=>setBudgetState(snap.val()||{}));
       db.ref('budgets').on('value',snap=>setBudgetsState(snap.val()||{}));
+      db.ref('bozzeVariazioni').on('value',snap=>{ const v=snap.val()||{}; setBozzeState(Object.entries(v).map(([id,b])=>({id,...b}))); });
     } else {
       setScritture(loadScritture()); setCespiti(loadCespiti()); setReady(true);
       try{ const m=JSON.parse(localStorage.getItem('contabilita_mappa_v1')||'{}'); setMappaCat(m); setMappaState(m); }catch(e){}
       try{ const c=JSON.parse(localStorage.getItem('contabilita_cat_v1')||'null'); if(c){ setCatNames(c); setCategorieState(c); } }catch(e){}
       try{ setBudgetState(JSON.parse(localStorage.getItem('contabilita_budget_v1')||'{}')); }catch(e){}
       try{ setBudgetsState(JSON.parse(localStorage.getItem('contabilita_budgets_v1')||'{}')); }catch(e){}
+      try{ setBozzeState(JSON.parse(localStorage.getItem('contabilita_bozze_v1')||'[]')); }catch(e){}
     }
   },[]);
 
@@ -4983,6 +5113,34 @@ function App({authUser, onLogout}){
     if(firebaseReady){ db.ref('budget').set(obj); }
     else { try{ localStorage.setItem('contabilita_budget_v1', JSON.stringify(obj)); }catch(e){} }
   };
+  /* ---- variazioni cassa in sospeso (bozze) ---- */
+  const saveBozzeLS = arr => { try{ localStorage.setItem('contabilita_bozze_v1',JSON.stringify(arr)); }catch(e){} };
+  const addBozze = list => {
+    if(!list||!list.length) return;
+    if(firebaseReady){ const up={}; list.forEach(b=>{ const {id,...rest}=b; up['bozzeVariazioni/'+id]=rest; }); db.ref().update(up); }
+    else setBozzeState(arr=>{ const n=[...arr,...list]; saveBozzeLS(n); return n; });
+  };
+  const updateBozza = (id,patch) => {
+    if(firebaseReady){ db.ref('bozzeVariazioni/'+id).update(patch); }
+    else setBozzeState(arr=>{ const n=arr.map(b=>b.id===id?{...b,...patch}:b); saveBozzeLS(n); return n; });
+  };
+  const updateBozze = updates => {
+    if(!updates||!updates.length) return;
+    if(firebaseReady){
+      const up={};
+      updates.forEach(({id,patch})=>{ const cur=bozze.find(b=>b.id===id)||{}; const {id:_,...rest}={...cur,...patch}; up['bozzeVariazioni/'+id]=rest; });
+      db.ref().update(up);
+    } else setBozzeState(arr=>{
+      const m=new Map(updates.map(u=>[u.id,u.patch]));
+      const n=arr.map(b=>m.has(b.id)?{...b,...m.get(b.id)}:b); saveBozzeLS(n); return n;
+    });
+  };
+  const deleteBozze = ids => {
+    if(!ids||!ids.length) return;
+    const set=new Set(ids);
+    if(firebaseReady){ const up={}; ids.forEach(id=>{ up['bozzeVariazioni/'+id]=null; }); db.ref().update(up); }
+    else setBozzeState(arr=>{ const n=arr.filter(b=>!set.has(b.id)); saveBozzeLS(n); return n; });
+  };
   const updateCespiti = arr => {
     if(firebaseReady){ const obj={}; arr.forEach(c=>{ const {id,...rest}=c; obj[id]=rest; }); db.ref('cespiti').set(obj); }
     else { setCespiti(arr); saveCespiti(arr); }
@@ -5034,7 +5192,8 @@ function App({authUser, onLogout}){
           {page==='snapshot' && <PageSnapshot scritture={scritture}/>}
           {page==='chiusura' && <PageChiusura scritture={scritture} categorie={categorie} toast={showToast}/>}
           {page==='nuova' && <PageNuova onAdd={addScrittura} toast={showToast} categorie={categorie}/>}
-          {page==='variazioni' && <PageVariazioni onAddMany={addScritture} scritture={scritture} saldi={saldi} categorie={categorie} toast={showToast}/>}
+          {page==='variazioni' && <PageVariazioni onAddMany={addScritture} scritture={scritture} saldi={saldi} categorie={categorie} toast={showToast}
+            bozze={bozze} addBozze={addBozze} updateBozza={updateBozza} updateBozze={updateBozze} deleteBozze={deleteBozze}/>}
           {page==='import' && <PageImport onAddMany={addScritture} mappa={mappa} setMappa={setMappa} categorie={categorie} setCategorie={setCategorie} toast={showToast}/>}
           {page==='giornale' && <PageLibroGiornale scritture={scritture} onUpdate={updateScrittura} onDelete={deleteScrittura} onDeleteMany={deleteScritture} updateScritture={updateScritture} toast={showToast} categorie={categorie}/>}
           {page==='movimenti' && <PageMovimenti scritture={scritture} saldi={saldi}/>}
