@@ -356,6 +356,35 @@
     font-weight: 500;
   }
   .form-row .req { color: var(--danger); }
+  /* form compatto: etichetta sopra il campo, colonne auto-adattive */
+  .form-inline {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px 14px;
+    align-items: end;
+  }
+  .form-inline .fld { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .form-inline .fld > label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-3);
+    font-weight: 600;
+  }
+  .form-inline .fld .req { color: var(--danger); }
+  .form-inline .fld.wide { grid-column: span 2; }
+  .form-inline .actions { display: flex; gap: 8px; align-items: flex-end; }
+  .form-inline .actions .btn { white-space: nowrap; }
+  @media (max-width: 760px) {
+    .form-inline { grid-template-columns: 1fr 1fr; }
+    .form-inline .fld.wide, .form-inline .actions { grid-column: 1 / -1; }
+    .form-inline .actions .btn { flex: 1; }
+  }
+  .tbl input[type=text], .tbl input[type=number], .tbl select {
+    padding: 5px 7px;
+    font-size: 12.5px;
+  }
+  .row-edit > td { background: var(--accent-soft); }
   input[type=text], input[type=number], input[type=date], input[type=month], input[type=password], select, textarea {
     width: 100%;
     padding: 8px 11px;
@@ -2834,9 +2863,15 @@ const impNum = v => {
 function PageLiquidita({saldi, scritture, conti, setConti, saldiIni, setSaldiIni, toast}){
   const list = (conti && conti.length) ? conti : CONTI;
   const liq = list.filter(c=>c.categoria==='DISP. LIQUIDE').sort((a,b)=>a.codice-b.codice);
+  const altri = list.filter(c=>c.categoria!=='DISP. LIQUIDE').sort((a,b)=>a.nome.localeCompare(b.nome,'it'));
+  const [modo,setModo]=useState('nuovo');        // nuovo | collega
   const [nome,setNome]=useState('');
   const [ini,setIni]=useState('');
+  const [collega,setCollega]=useState('');
   const [edit,setEdit]=useState(null);           // {codice, nome, ini}
+  const [scoll,setScoll]=useState(null);         // {codice, cat}
+  /* categorie di Stato Patrimoniale valide come destinazione dello scollega */
+  const catSP = Array.from(new Set(list.filter(c=>c.prospetto==='SP' && c.categoria && c.categoria!=='DISP. LIQUIDE').map(c=>c.categoria))).sort();
 
   const nMov = cod => {
     let n=0;
@@ -2864,13 +2899,41 @@ function PageLiquidita({saldi, scritture, conti, setConti, saldiIni, setSaldiIni
     const v=r2(impNum(ini));
     if(v!==0) setSaldiIni({...saldiIni,[codice]:v});
     setNome(''); setIni('');
-    toast&&toast(`Conto “${n}” aggiunto alla liquidità`,'success');
+    toast&&toast(`Conto “${n}” creato e aggiunto alla liquidità`,'success');
+  }
+
+  /* converte un conto già presente nel piano dei conti in conto di liquidità */
+  function collegaEsistente(){
+    const cod=parseInt(collega,10);
+    const c=list.find(x=>x.codice===cod);
+    if(!c){ toast&&toast('Seleziona un conto dal piano dei conti','error'); return; }
+    const mov=nMov(cod);
+    const msg=mov>0
+      ? `“${c.nome}” ha ${mov} moviment${mov===1?'o':'i'} già registrat${mov===1?'o':'i'}: verranno riclassificati come liquidità (categoria ${c.categoria} → DISP. LIQUIDE). Procedere?`
+      : `Collegare “${c.nome}” ai conti di liquidità? La categoria passa da ${c.categoria} a DISP. LIQUIDE.`;
+    if(!window.confirm(msg)) return;
+    setConti(list.map(x=>x.codice===cod?{...x,categoria:'DISP. LIQUIDE',prospetto:'SP',eccedenza:'DARE/AVERE'}:x));
+    const v=r2(impNum(ini));
+    if(v!==0) setSaldiIni({...saldiIni,[cod]:v});
+    setCollega(''); setIni('');
+    toast&&toast(`“${c.nome}” collegato alla liquidità`,'success');
+  }
+
+  /* toglie il conto dalla liquidità senza eliminarlo dal piano dei conti */
+  function confermaScollega(){
+    if(!scoll) return;
+    const c=list.find(x=>x.codice===scoll.codice);
+    if(!c) { setScoll(null); return; }
+    setConti(list.map(x=>x.codice===scoll.codice?{...x,categoria:scoll.cat}:x));
+    const s={...saldiIni}; delete s[scoll.codice]; setSaldiIni(s);
+    setScoll(null);
+    toast&&toast(`“${c.nome}” spostato in ${scoll.cat}`,'success');
   }
 
   function elimina(c){
     const mov=nMov(c.codice);
     if(mov>0){ toast&&toast(`Impossibile eliminare: il conto ha ${mov} moviment${mov===1?'o':'i'}`,'error'); return; }
-    if(!window.confirm(`Eliminare il conto di liquidità ${c.nome}?`)) return;
+    if(!window.confirm(`Eliminare definitivamente il conto ${c.nome} dal piano dei conti?`)) return;
     setConti(list.filter(x=>x.codice!==c.codice));
     const s={...saldiIni}; delete s[c.codice]; setSaldiIni(s);
     toast&&toast('Conto eliminato','success');
@@ -2892,23 +2955,50 @@ function PageLiquidita({saldi, scritture, conti, setConti, saldiIni, setSaldiIni
       <PageHead title="Conti Liquidità" sub="Conti che compongono le disponibilità: cassa, conti correnti, carte prepagate"/>
 
       <div className="card" style={{marginBottom:18}}>
-        <div className="card-title">Nuovo conto di liquidità</div>
-        <div style={{display:'flex',gap:12,flexWrap:'wrap',alignItems:'flex-end'}}>
-          <div className="form-row" style={{flex:1,minWidth:220}}>
-            <label>Nome conto <span className="req">*</span></label>
-            <input type="text" value={nome} onChange={e=>setNome(e.target.value)}
-              placeholder="ES. SATISPAY, REVOLUT, CASSA CONTANTI"
-              onKeyDown={e=>{if(e.key==='Enter')aggiungi();}}/>
+        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:14,flexWrap:'wrap'}}>
+          <div className="card-title" style={{margin:0}}>Aggiungi conto di liquidità</div>
+          <div className="tipo-switch" style={{gridTemplateColumns:'1fr 1fr',maxWidth:320,marginLeft:'auto'}}>
+            <button className={modo==='nuovo'?'active':''} onClick={()=>setModo('nuovo')}>Crea da zero</button>
+            <button className={modo==='collega'?'active':''} onClick={()=>setModo('collega')}>Collega esistente</button>
           </div>
-          <div className="form-row" style={{maxWidth:180}}>
-            <label>Saldo iniziale</label>
-            <input type="text" inputMode="decimal" value={ini} onChange={e=>setIni(e.target.value)}
-              placeholder="0,00" onKeyDown={e=>{if(e.key==='Enter')aggiungi();}}/>
-          </div>
-          <button className="btn accent" onClick={aggiungi}>+ Aggiungi</button>
         </div>
-        <div style={{fontSize:12,color:'var(--ink-3)',marginTop:10,fontStyle:'italic'}}>
-          Il codice viene assegnato automaticamente. Il conto compare subito in Dashboard, Nuova scrittura, Snapshot e Rendiconto.
+
+        {modo==='nuovo' ? (
+          <div className="form-inline">
+            <div className="fld wide">
+              <label>Nome conto <span className="req">*</span></label>
+              <input type="text" value={nome} onChange={e=>setNome(e.target.value)}
+                placeholder="ES. SATISPAY, REVOLUT, CASSA CONTANTI"
+                onKeyDown={e=>{if(e.key==='Enter')aggiungi();}}/>
+            </div>
+            <div className="fld">
+              <label>Saldo iniziale</label>
+              <input type="text" inputMode="decimal" value={ini} onChange={e=>setIni(e.target.value)}
+                placeholder="0,00" onKeyDown={e=>{if(e.key==='Enter')aggiungi();}}/>
+            </div>
+            <div className="actions"><button className="btn accent" onClick={aggiungi}>+ Crea conto</button></div>
+          </div>
+        ) : (
+          <div className="form-inline">
+            <div className="fld wide">
+              <label>Conto dal piano dei conti <span className="req">*</span></label>
+              <select value={collega} onChange={e=>setCollega(e.target.value)}>
+                <option value="">— seleziona un conto —</option>
+                {altri.map(c=><option key={c.codice} value={c.codice}>{c.codice} · {c.nome} ({c.categoria})</option>)}
+              </select>
+            </div>
+            <div className="fld">
+              <label>Saldo iniziale</label>
+              <input type="text" inputMode="decimal" value={ini} onChange={e=>setIni(e.target.value)} placeholder="0,00"/>
+            </div>
+            <div className="actions"><button className="btn accent" onClick={collegaEsistente} disabled={!collega}>↔ Collega</button></div>
+          </div>
+        )}
+
+        <div style={{fontSize:12,color:'var(--ink-3)',marginTop:12,fontStyle:'italic'}}>
+          {modo==='nuovo'
+            ? 'Il codice viene assegnato automaticamente. Il conto compare subito in Dashboard, Nuova scrittura, Snapshot e Rendiconto.'
+            : 'Il conto selezionato viene riclassificato in DISP. LIQUIDE mantenendo codice, nome e movimenti già registrati.'}
         </div>
       </div>
 
@@ -2917,13 +3007,28 @@ function PageLiquidita({saldi, scritture, conti, setConti, saldiIni, setSaldiIni
           <thead><tr>
             <th style={{width:50}}>Cod</th><th>Conto</th>
             <th className="num">Saldo iniziale</th><th className="num">Saldo contabile</th><th className="num">Saldo reale</th>
-            <th className="num" style={{width:70}}>Movim.</th><th style={{width:80}}></th>
+            <th className="num" style={{width:70}}>Movim.</th><th style={{width:110}}></th>
           </tr></thead>
           <tbody>
             {righe.length===0 && <tr><td colSpan="7" className="empty-state">Nessun conto di liquidità</td></tr>}
             {righe.map(c=>{
               const inEdit = edit && edit.codice===c.codice;
-              return <tr key={c.codice}>
+              const inScoll = scoll && scoll.codice===c.codice;
+              if(inScoll) return <tr key={c.codice} className="row-edit">
+                <td className="mono">{c.codice}</td>
+                <td colSpan="4" style={{fontSize:12.5}}>
+                  Togli <b>{c.nome}</b> dalla liquidità e spostalo in:{' '}
+                  <select value={scoll.cat} onChange={e=>setScoll(x=>({...x,cat:e.target.value}))} style={{width:'auto',display:'inline-block',marginLeft:6}}>
+                    {catSP.map(k=><option key={k} value={k}>{k}</option>)}
+                  </select>
+                  <div style={{color:'var(--ink-3)',fontStyle:'italic',marginTop:5}}>Il conto resta nel piano dei conti con i suoi movimenti, ma esce da dashboard, rendiconto e snapshot.</div>
+                </td>
+                <td colSpan="2" style={{textAlign:'center',whiteSpace:'nowrap'}}>
+                  <button className="btn accent sm" onClick={confermaScollega}>Conferma</button>
+                  <button className="btn ghost sm" onClick={()=>setScoll(null)} style={{marginLeft:4}}>✕</button>
+                </td>
+              </tr>;
+              return <tr key={c.codice} className={inEdit?'row-edit':''}>
                 <td className="mono">{c.codice}</td>
                 <td>{inEdit
                   ? <input type="text" value={edit.nome} onChange={e=>setEdit(x=>({...x,nome:e.target.value}))}
@@ -2943,10 +3048,12 @@ function PageLiquidita({saldi, scritture, conti, setConti, saldiIni, setSaldiIni
                   </> : <>
                     <button onClick={()=>setEdit({codice:c.codice,nome:c.nome,ini:num2(c.ini)})}
                       title="Modifica nome e saldo iniziale"
-                      style={{background:'transparent',border:'none',color:'var(--ink-3)',fontSize:14,padding:'2px 6px',cursor:'pointer'}}>✎</button>
+                      style={{background:'transparent',border:'none',color:'var(--ink-3)',fontSize:14,padding:'2px 5px',cursor:'pointer'}}>✎</button>
+                    <button onClick={()=>{setEdit(null);setScoll({codice:c.codice,cat:catSP[0]||'IMM. FINANZIARIE'});}} title="Togli dalla liquidità (il conto resta nel piano dei conti)"
+                      style={{background:'transparent',border:'none',color:'var(--ink-3)',fontSize:14,padding:'2px 5px',cursor:'pointer'}}>⇱</button>
                     <button onClick={()=>elimina(c)} disabled={c.mov>0}
-                      title={c.mov>0?'Conto con movimenti: non eliminabile':'Elimina conto'}
-                      style={{background:'transparent',border:'none',color:c.mov>0?'var(--rule-2)':'var(--danger)',fontSize:15,lineHeight:1,padding:'2px 6px',cursor:c.mov>0?'not-allowed':'pointer'}}>✕</button>
+                      title={c.mov>0?'Conto con movimenti: non eliminabile':'Elimina dal piano dei conti'}
+                      style={{background:'transparent',border:'none',color:c.mov>0?'var(--rule-2)':'var(--danger)',fontSize:15,lineHeight:1,padding:'2px 5px',cursor:c.mov>0?'not-allowed':'pointer'}}>✕</button>
                   </>}
                 </td>
               </tr>;
@@ -2962,7 +3069,7 @@ function PageLiquidita({saldi, scritture, conti, setConti, saldiIni, setSaldiIni
         </table>
       </div>
       <div style={{fontSize:12,color:'var(--ink-3)',marginTop:10,fontStyle:'italic'}}>
-        Il saldo reale parte dal saldo iniziale e somma i movimenti registrati. I conti con movimenti non sono eliminabili: prima vanno azzerati o girocontati.
+        ✎ modifica nome e saldo iniziale · ⇱ toglie il conto dalla liquidità lasciandolo nel piano dei conti · ✕ elimina (solo conti senza movimenti).
       </div>
     </div>
   );
@@ -2975,12 +3082,18 @@ function PagePianoConti({saldi, conti, setConti, toast}){
   const list = (conti && conti.length) ? conti : CONTI;
   const [q,setQ]=useState('');
   const [fProsp,setFProsp]=useState('');
+  const [fCat,setFCat]=useState('');
   const [showAdd,setShowAdd]=useState(false);
   const nextCod = list.reduce((m,c)=>Math.max(m,c.codice||0),0)+1;
   const [form,setForm]=useState({codice:nextCod,nome:'',prospetto:'SP',categoria:'',eccedenza:'DARE'});
+  const [edit,setEdit]=useState(null);   // {codice, nome, prospetto, categoria, eccedenza}
   const cats = Array.from(new Set(list.map(c=>c.categoria).filter(Boolean))).sort();
 
-  const rows=list.filter(c=>(!q||c.nome.toLowerCase().includes(q.toLowerCase())||String(c.codice)===q)&&(!fProsp||c.prospetto.startsWith(fProsp)));
+  const rows=list.filter(c=>
+    (!q || c.nome.toLowerCase().includes(q.toLowerCase()) || String(c.codice)===q) &&
+    (!fProsp || c.prospetto.startsWith(fProsp)) &&
+    (!fCat || c.categoria===fCat)
+  );
 
   const usato = cod => { const s=saldi[cod]; return !!(s&&(s.dare!==0||s.avere!==0)); };
 
@@ -2990,10 +3103,10 @@ function PagePianoConti({saldi, conti, setConti, toast}){
     if(!nome){ toast&&toast('Inserisci il nome del conto','error'); return; }
     if(!codice||codice<1){ toast&&toast('Codice non valido','error'); return; }
     if(list.some(c=>c.codice===codice)){ toast&&toast('Codice già esistente','error'); return; }
+    if(list.some(c=>c.nome.toUpperCase()===nome.toUpperCase())){ toast&&toast('Esiste già un conto con questo nome','error'); return; }
     const categoria=(form.categoria||'').trim().toUpperCase()||'—';
     const nuovo={codice,nome:nome.toUpperCase(),prospetto:form.prospetto,categoria,eccedenza:form.eccedenza};
-    const next=[...list,nuovo].sort((a,b)=>a.codice-b.codice);
-    setConti(next);
+    setConti([...list,nuovo].sort((a,b)=>a.codice-b.codice));
     toast&&toast('Conto aggiunto','success');
     setForm({codice:codice+1,nome:'',prospetto:form.prospetto,categoria:form.categoria,eccedenza:'DARE'});
   }
@@ -3005,62 +3118,110 @@ function PagePianoConti({saldi, conti, setConti, toast}){
     toast&&toast('Conto eliminato','success');
   }
 
+  function apriEdit(c){ setShowAdd(false); setEdit({codice:c.codice,nome:c.nome,prospetto:c.prospetto,categoria:c.categoria,eccedenza:c.eccedenza}); }
+
+  function salvaEdit(){
+    if(!edit) return;
+    const nome=(edit.nome||'').trim().toUpperCase();
+    if(!nome){ toast&&toast('Il nome non può essere vuoto','error'); return; }
+    if(list.some(c=>c.codice!==edit.codice && c.nome.toUpperCase()===nome)){ toast&&toast('Nome già usato da un altro conto','error'); return; }
+    const categoria=(edit.categoria||'').trim().toUpperCase()||'—';
+    const prec=list.find(c=>c.codice===edit.codice);
+    if(prec && prec.categoria!==categoria && usato(edit.codice)){
+      if(!window.confirm(`Il conto ha movimenti registrati. Cambiando categoria da ${prec.categoria} a ${categoria} i saldi verranno riclassificati nei prospetti. Procedere?`)) return;
+    }
+    setConti(list.map(c=>c.codice===edit.codice?{...c,nome,prospetto:edit.prospetto,categoria,eccedenza:edit.eccedenza}:c));
+    setEdit(null);
+    toast&&toast('Conto aggiornato','success');
+  }
+
   return (
     <div>
-      <PageHead title="Piano dei Conti" sub={`${list.length} conti`}/>
+      <PageHead title="Piano dei Conti" sub={`${list.length} conti · ${cats.length} categorie`}/>
       <div className="filters">
         <input type="text" placeholder="Cerca per nome o codice…" value={q} onChange={e=>setQ(e.target.value)}/>
         <span className="label">Prospetto</span>
         <select value={fProsp} onChange={e=>setFProsp(e.target.value)}><option value="">Tutti</option><option value="SP">Stato Patrimoniale</option><option value="CE">Conto Economico</option></select>
+        <span className="label">Categoria</span>
+        <select value={fCat} onChange={e=>setFCat(e.target.value)}>
+          <option value="">Tutte</option>
+          {cats.map(k=><option key={k} value={k}>{k}</option>)}
+        </select>
         <div style={{flex:1}}></div>
-        <button className="btn accent sm" onClick={()=>setShowAdd(s=>!s)}>{showAdd?'Chiudi':'+ Nuovo conto'}</button>
+        <button className="btn accent sm" onClick={()=>{setEdit(null);setShowAdd(s=>!s);}}>{showAdd?'Chiudi':'+ Nuovo conto'}</button>
       </div>
 
       {showAdd && <div className="card" style={{marginBottom:18}}>
-        <div className="card-title">Nuovo conto</div>
-        <div style={{display:'flex',gap:12,flexWrap:'wrap',alignItems:'flex-end'}}>
-          <div className="form-row" style={{maxWidth:90}}>
+        <div className="card-title" style={{marginBottom:14}}>Nuovo conto</div>
+        <div className="form-inline">
+          <div className="fld" style={{maxWidth:110}}>
             <label>Codice</label>
             <input type="number" value={form.codice} onChange={e=>setForm(f=>({...f,codice:e.target.value}))}/>
           </div>
-          <div className="form-row" style={{flex:1,minWidth:200}}>
-            <label>Nome conto</label>
-            <input type="text" value={form.nome} onChange={e=>setForm(f=>({...f,nome:e.target.value}))} placeholder="ES. NUOVO CONTO" onKeyDown={e=>{if(e.key==='Enter')aggiungi();}}/>
+          <div className="fld wide">
+            <label>Nome conto <span className="req">*</span></label>
+            <input type="text" value={form.nome} onChange={e=>setForm(f=>({...f,nome:e.target.value}))}
+              placeholder="ES. SPESE VIAGGIO" onKeyDown={e=>{if(e.key==='Enter')aggiungi();}}/>
           </div>
-          <div className="form-row" style={{maxWidth:120}}>
+          <div className="fld">
             <label>Prospetto</label>
             <select value={form.prospetto} onChange={e=>setForm(f=>({...f,prospetto:e.target.value}))}><option>SP</option><option>CE</option><option>CE/SP</option></select>
           </div>
-          <div className="form-row" style={{minWidth:180}}>
+          <div className="fld wide">
             <label>Categoria</label>
             <input list="pc-cat-list" value={form.categoria} onChange={e=>setForm(f=>({...f,categoria:e.target.value}))} placeholder="ES. COSTI"/>
             <datalist id="pc-cat-list">{cats.map(k=><option key={k} value={k}/>)}</datalist>
           </div>
-          <div className="form-row" style={{maxWidth:150}}>
+          <div className="fld">
             <label>Eccedenza</label>
             <select value={form.eccedenza} onChange={e=>setForm(f=>({...f,eccedenza:e.target.value}))}><option>DARE</option><option>AVERE</option><option>DARE/AVERE</option></select>
           </div>
-          <button className="btn accent" onClick={aggiungi}>Aggiungi</button>
+          <div className="actions">
+            <button className="btn accent" onClick={aggiungi}>+ Aggiungi</button>
+            <button className="btn ghost" onClick={()=>setShowAdd(false)}>Annulla</button>
+          </div>
+        </div>
+        <div style={{fontSize:12,color:'var(--ink-3)',marginTop:12,fontStyle:'italic'}}>
+          Categoria <b>DISP. LIQUIDE</b> = conto di liquidità: entra in dashboard, rendiconto e snapshot. Per quelli conviene usare la pagina Conti Liquidità, che imposta tutto e gestisce il saldo iniziale.
         </div>
       </div>}
 
       <div className="tbl-wrap">
         <table className="tbl">
-          <thead><tr><th style={{width:50}}>Cod</th><th>Conto</th><th>Prospetto</th><th>Categoria</th><th>Eccedenza</th><th className="num">Saldo</th><th style={{width:44}}></th></tr></thead>
+          <thead><tr>
+            <th style={{width:50}}>Cod</th><th>Conto</th><th style={{width:90}}>Prospetto</th><th>Categoria</th>
+            <th style={{width:110}}>Eccedenza</th><th className="num">Saldo</th><th style={{width:80}}></th>
+          </tr></thead>
           <tbody>
+            {rows.length===0 && <tr><td colSpan="7" className="empty-state">Nessun conto corrisponde ai filtri</td></tr>}
             {rows.sort((a,b)=>a.codice-b.codice).map(c=>{
               const s=saldi[c.codice];
               const inUse=usato(c.codice);
+              const inEdit = edit && edit.codice===c.codice;
+              if(inEdit) return <tr key={c.codice} className="row-edit">
+                <td className="mono">{c.codice}</td>
+                <td><input type="text" value={edit.nome} onChange={e=>setEdit(x=>({...x,nome:e.target.value}))}
+                  onKeyDown={e=>{if(e.key==='Enter')salvaEdit(); if(e.key==='Escape')setEdit(null);}} style={{width:'100%'}} autoFocus/></td>
+                <td><select value={edit.prospetto} onChange={e=>setEdit(x=>({...x,prospetto:e.target.value}))}><option>SP</option><option>CE</option><option>CE/SP</option></select></td>
+                <td><input list="pc-cat-list-edit" value={edit.categoria} onChange={e=>setEdit(x=>({...x,categoria:e.target.value}))} style={{width:'100%'}}/>
+                  <datalist id="pc-cat-list-edit">{cats.map(k=><option key={k} value={k}/>)}</datalist></td>
+                <td><select value={edit.eccedenza} onChange={e=>setEdit(x=>({...x,eccedenza:e.target.value}))}><option>DARE</option><option>AVERE</option><option>DARE/AVERE</option></select></td>
+                <td className={'num '+(s&&s.saldo<0?'neg':'')}>{s&&(s.dare!==0||s.avere!==0)?num2(s.saldo):'—'}</td>
+                <td style={{textAlign:'center',whiteSpace:'nowrap'}}>
+                  <button className="btn accent sm" onClick={salvaEdit}>Salva</button>
+                  <button className="btn ghost sm" onClick={()=>setEdit(null)} style={{marginLeft:4}}>✕</button>
+                </td>
+              </tr>;
               return <tr key={c.codice}>
                 <td className="mono">{c.codice}</td><td><b>{c.nome}</b></td>
                 <td><span className="pill">{c.prospetto}</span></td>
                 <td style={{fontSize:12}}>{c.categoria}</td>
                 <td style={{fontSize:12,color:'var(--ink-3)'}}>{c.eccedenza}</td>
                 <td className={'num '+(s&&s.saldo<0?'neg':'')}>{s&&(s.dare!==0||s.avere!==0)?num2(s.saldo):'—'}</td>
-                <td style={{textAlign:'center'}}>
-                  <button
-                    onClick={()=>elimina(c)}
-                    disabled={inUse}
+                <td style={{textAlign:'center',whiteSpace:'nowrap'}}>
+                  <button onClick={()=>apriEdit(c)} title="Modifica conto"
+                    style={{background:'transparent',border:'none',color:'var(--ink-3)',fontSize:14,padding:'2px 6px',cursor:'pointer'}}>✎</button>
+                  <button onClick={()=>elimina(c)} disabled={inUse}
                     title={inUse?'Conto con movimenti: non eliminabile':'Elimina conto'}
                     style={{background:'transparent',border:'none',color:inUse?'var(--rule-2)':'var(--danger)',fontSize:15,lineHeight:1,padding:'2px 6px',cursor:inUse?'not-allowed':'pointer'}}>✕</button>
                 </td>
@@ -3069,7 +3230,9 @@ function PagePianoConti({saldi, conti, setConti, toast}){
           </tbody>
         </table>
       </div>
-      <div style={{fontSize:12,color:'var(--ink-3)',marginTop:10,fontStyle:'italic'}}>I conti con movimenti non possono essere eliminati. Le modifiche al piano dei conti vengono salvate automaticamente.</div>
+      <div style={{fontSize:12,color:'var(--ink-3)',marginTop:10,fontStyle:'italic'}}>
+        ✎ modifica nome, prospetto, categoria ed eccedenza · ✕ elimina (solo conti senza movimenti). Il codice non è modificabile perché è il riferimento usato dalle scritture già registrate. Tutte le modifiche vengono salvate automaticamente.
+      </div>
     </div>
   );
 }
