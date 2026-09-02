@@ -866,7 +866,26 @@ const { useState, useMemo, useEffect, useRef } = React;
 const SEED = window.__SEED__;
 const MOVIMENTI = SEED.movimenti;                 // entrate/uscite di cassa
 const CESPITI_SEED = SEED.cespiti;
-const SALDI_INIZIALI = SEED.saldiIniziali;        // per conto liquidità (cod -> importo)
+/* ---- saldi iniziali dei conti liquidità: modificabili e persistiti ---- */
+const LS_SALDI_INI = 'contabilita_personale_saldiini_v1';
+function normSaldiIni(v){
+  const out={};
+  if(Array.isArray(v)) v.forEach((x,i)=>{ if(x!=null&&x!=='') out[i]=Number(x)||0; });
+  else if(v&&typeof v==='object') Object.entries(v).forEach(([k,x])=>{
+    const cod=parseInt(String(k).replace(/^c/,''),10);
+    if(!isNaN(cod)&&x!=null&&x!=='') out[cod]=Number(x)||0;
+  });
+  return out;
+}
+function loadSaldiIni(){
+  try{ const raw=localStorage.getItem(LS_SALDI_INI); if(raw) return normSaldiIni(JSON.parse(raw)); }catch(e){}
+  return normSaldiIni(SEED.saldiIniziali);
+}
+function saveSaldiIniLS(obj){ try{ localStorage.setItem(LS_SALDI_INI, JSON.stringify(obj)); }catch(e){} }
+/* su Firebase le chiavi vengono prefissate ("c1") per evitare la conversione in array */
+function saldiIniToFB(obj){ const o={}; Object.entries(obj||{}).forEach(([k,v])=>{ o['c'+k]=Number(v)||0; }); return o; }
+let SALDI_INIZIALI = loadSaldiIni();              // per conto liquidità (cod -> importo)
+function applySaldiIni(obj){ SALDI_INIZIALI = normSaldiIni(obj); }
 
 /* ---- piano dei conti: modificabile e persistito ---- */
 const LS_CONTI = 'contabilita_personale_conti_v1';
@@ -1310,7 +1329,10 @@ function PageDashboard({scritture, saldi, goto}){
         <Kpi label="Risultato d'esercizio" value={eur(risultato)} neg={risultato<0} hint={`Ricavi ${eur(ricavi)} · Costi ${eur(costi)}`}/>
       </div>
 
-      <div className="card-title serif" style={{fontSize:16,margin:'4px 0 12px'}}>Disponibilità per conto</div>
+      <div style={{display:'flex',alignItems:'baseline',gap:12,margin:'4px 0 12px',flexWrap:'wrap'}}>
+        <div className="card-title serif" style={{fontSize:16,margin:0}}>Disponibilità per conto</div>
+        <button className="btn ghost sm" onClick={()=>goto('liquidita')}>⚙ Gestisci conti</button>
+      </div>
       <div className="liq-grid" style={{marginBottom:28}}>
         {liq.map(x=>(
           <div className="liq-card" key={x.cod} onClick={()=>setDrill(x.cod)} style={{cursor:'pointer'}} title="Vedi tutti i movimenti">
@@ -2792,6 +2814,156 @@ function PageAmmortamenti({cespiti, onAdd, updateCespiti, toast}){
         </table>
       </div>
       <div style={{fontSize:12,color:'var(--ink-3)',marginTop:10,fontStyle:'italic'}}>Quota annua = costo storico × aliquota. Periodo stimato in base all'aliquota a quote costanti.</div>
+    </div>
+  );
+}
+
+/* ============================================================
+   PAGINA: CONTI LIQUIDITÀ
+   Aggiunta / rimozione dei conti di liquidità (categoria DISP. LIQUIDE):
+   ogni conto creato qui compare automaticamente in Dashboard, Nuova
+   scrittura, Snapshot, Rendiconto e Movimenti.
+   ============================================================ */
+const impNum = v => {
+  let s=String(v==null?'':v).trim().replace(/[^\d.,-]/g,'');
+  if(s.includes(',')) s=s.replace(/\./g,'').replace(',','.');   // formato italiano 1.234,56
+  const n=parseFloat(s);
+  return isNaN(n)?0:n;
+};
+
+function PageLiquidita({saldi, scritture, conti, setConti, saldiIni, setSaldiIni, toast}){
+  const list = (conti && conti.length) ? conti : CONTI;
+  const liq = list.filter(c=>c.categoria==='DISP. LIQUIDE').sort((a,b)=>a.codice-b.codice);
+  const [nome,setNome]=useState('');
+  const [ini,setIni]=useState('');
+  const [edit,setEdit]=useState(null);           // {codice, nome, ini}
+
+  const nMov = cod => {
+    let n=0;
+    (scritture||[]).forEach(s=>{ if((s.righe||[]).some(r=>r.c===cod)) n++; });
+    return n + MOVIMENTI.filter(m=>m.cod===cod).length;
+  };
+
+  const righe = liq.map(c=>({
+    ...c,
+    ini: r2(saldiIni[c.codice]||0),
+    contabile: saldi[c.codice] ? saldi[c.codice].saldo : 0,
+    reale: saldoRealeConto(c.codice, scritture),
+    mov: nMov(c.codice),
+  }));
+  const totIni=r2(righe.reduce((s,x)=>s+x.ini,0));
+  const totReale=r2(righe.reduce((s,x)=>s+x.reale,0));
+
+  function aggiungi(){
+    const n=(nome||'').trim().toUpperCase();
+    if(!n){ toast&&toast('Inserisci il nome del conto','error'); return; }
+    if(list.some(c=>String(c.nome||'').toUpperCase()===n)){ toast&&toast('Esiste già un conto con questo nome','error'); return; }
+    const codice=list.reduce((m,c)=>Math.max(m,c.codice||0),0)+1;
+    const nuovo={codice,nome:n,prospetto:'SP',categoria:'DISP. LIQUIDE',eccedenza:'DARE/AVERE'};
+    setConti([...list,nuovo].sort((a,b)=>a.codice-b.codice));
+    const v=r2(impNum(ini));
+    if(v!==0) setSaldiIni({...saldiIni,[codice]:v});
+    setNome(''); setIni('');
+    toast&&toast(`Conto “${n}” aggiunto alla liquidità`,'success');
+  }
+
+  function elimina(c){
+    const mov=nMov(c.codice);
+    if(mov>0){ toast&&toast(`Impossibile eliminare: il conto ha ${mov} moviment${mov===1?'o':'i'}`,'error'); return; }
+    if(!window.confirm(`Eliminare il conto di liquidità ${c.nome}?`)) return;
+    setConti(list.filter(x=>x.codice!==c.codice));
+    const s={...saldiIni}; delete s[c.codice]; setSaldiIni(s);
+    toast&&toast('Conto eliminato','success');
+  }
+
+  function salvaEdit(){
+    if(!edit) return;
+    const n=(edit.nome||'').trim().toUpperCase();
+    if(!n){ toast&&toast('Il nome non può essere vuoto','error'); return; }
+    if(list.some(c=>c.codice!==edit.codice && String(c.nome||'').toUpperCase()===n)){ toast&&toast('Nome già usato da un altro conto','error'); return; }
+    setConti(list.map(c=>c.codice===edit.codice?{...c,nome:n}:c));
+    setSaldiIni({...saldiIni,[edit.codice]:r2(impNum(edit.ini))});
+    setEdit(null);
+    toast&&toast('Conto aggiornato','success');
+  }
+
+  return (
+    <div>
+      <PageHead title="Conti Liquidità" sub="Conti che compongono le disponibilità: cassa, conti correnti, carte prepagate"/>
+
+      <div className="card" style={{marginBottom:18}}>
+        <div className="card-title">Nuovo conto di liquidità</div>
+        <div style={{display:'flex',gap:12,flexWrap:'wrap',alignItems:'flex-end'}}>
+          <div className="form-row" style={{flex:1,minWidth:220}}>
+            <label>Nome conto <span className="req">*</span></label>
+            <input type="text" value={nome} onChange={e=>setNome(e.target.value)}
+              placeholder="ES. SATISPAY, REVOLUT, CASSA CONTANTI"
+              onKeyDown={e=>{if(e.key==='Enter')aggiungi();}}/>
+          </div>
+          <div className="form-row" style={{maxWidth:180}}>
+            <label>Saldo iniziale</label>
+            <input type="text" inputMode="decimal" value={ini} onChange={e=>setIni(e.target.value)}
+              placeholder="0,00" onKeyDown={e=>{if(e.key==='Enter')aggiungi();}}/>
+          </div>
+          <button className="btn accent" onClick={aggiungi}>+ Aggiungi</button>
+        </div>
+        <div style={{fontSize:12,color:'var(--ink-3)',marginTop:10,fontStyle:'italic'}}>
+          Il codice viene assegnato automaticamente. Il conto compare subito in Dashboard, Nuova scrittura, Snapshot e Rendiconto.
+        </div>
+      </div>
+
+      <div className="tbl-wrap">
+        <table className="tbl">
+          <thead><tr>
+            <th style={{width:50}}>Cod</th><th>Conto</th>
+            <th className="num">Saldo iniziale</th><th className="num">Saldo contabile</th><th className="num">Saldo reale</th>
+            <th className="num" style={{width:70}}>Movim.</th><th style={{width:80}}></th>
+          </tr></thead>
+          <tbody>
+            {righe.length===0 && <tr><td colSpan="7" className="empty-state">Nessun conto di liquidità</td></tr>}
+            {righe.map(c=>{
+              const inEdit = edit && edit.codice===c.codice;
+              return <tr key={c.codice}>
+                <td className="mono">{c.codice}</td>
+                <td>{inEdit
+                  ? <input type="text" value={edit.nome} onChange={e=>setEdit(x=>({...x,nome:e.target.value}))}
+                      onKeyDown={e=>{if(e.key==='Enter')salvaEdit(); if(e.key==='Escape')setEdit(null);}} style={{width:'100%'}} autoFocus/>
+                  : <b>{c.nome}</b>}</td>
+                <td className="num">{inEdit
+                  ? <input type="text" inputMode="decimal" value={edit.ini} onChange={e=>setEdit(x=>({...x,ini:e.target.value}))}
+                      onKeyDown={e=>{if(e.key==='Enter')salvaEdit(); if(e.key==='Escape')setEdit(null);}} style={{width:100,textAlign:'right'}}/>
+                  : <span className={c.ini<0?'neg':''}>{num2(c.ini)}</span>}</td>
+                <td className={'num '+(c.contabile<0?'neg':'')}>{num2(c.contabile)}</td>
+                <td className={'num '+(c.reale<0?'neg':'')} style={{fontWeight:600}}>{num2(c.reale)}</td>
+                <td className="num" style={{fontSize:12,color:'var(--ink-3)'}}>{c.mov}</td>
+                <td style={{textAlign:'center',whiteSpace:'nowrap'}}>
+                  {inEdit ? <>
+                    <button className="btn accent sm" onClick={salvaEdit}>Salva</button>
+                    <button className="btn ghost sm" onClick={()=>setEdit(null)} style={{marginLeft:4}}>✕</button>
+                  </> : <>
+                    <button onClick={()=>setEdit({codice:c.codice,nome:c.nome,ini:num2(c.ini)})}
+                      title="Modifica nome e saldo iniziale"
+                      style={{background:'transparent',border:'none',color:'var(--ink-3)',fontSize:14,padding:'2px 6px',cursor:'pointer'}}>✎</button>
+                    <button onClick={()=>elimina(c)} disabled={c.mov>0}
+                      title={c.mov>0?'Conto con movimenti: non eliminabile':'Elimina conto'}
+                      style={{background:'transparent',border:'none',color:c.mov>0?'var(--rule-2)':'var(--danger)',fontSize:15,lineHeight:1,padding:'2px 6px',cursor:c.mov>0?'not-allowed':'pointer'}}>✕</button>
+                  </>}
+                </td>
+              </tr>;
+            })}
+          </tbody>
+          <tfoot><tr>
+            <td></td><td style={{fontWeight:700}}>Totale</td>
+            <td className="num" style={{fontWeight:700}}>{num2(totIni)}</td>
+            <td></td>
+            <td className={'num '+(totReale<0?'neg':'')} style={{fontWeight:700}}>{num2(totReale)}</td>
+            <td colSpan="2"></td>
+          </tr></tfoot>
+        </table>
+      </div>
+      <div style={{fontSize:12,color:'var(--ink-3)',marginTop:10,fontStyle:'italic'}}>
+        Il saldo reale parte dal saldo iniziale e somma i movimenti registrati. I conti con movimenti non sono eliminabili: prima vanno azzerati o girocontati.
+      </div>
     </div>
   );
 }
@@ -4412,6 +4584,7 @@ const NAV = [
     {id:'budget',ico:'◑',label:'Budget'},
   ]},
   {sec:'Anagrafiche',items:[
+    {id:'liquidita',ico:'◈',label:'Conti Liquidità'},
     {id:'pianoconti',ico:'#',label:'Piano dei Conti'},
     {id:'categorie',ico:'❏',label:'Categorie'},
     {id:'cespiti',ico:'▣',label:'Cespiti'},
@@ -4433,6 +4606,7 @@ function App({authUser, onLogout}){
   const [scritture,setScritture]=useState([]);
   const [cespiti,setCespiti]=useState([]);
   const [conti,setContiState]=useState(CONTI);
+  const [saldiIni,setSaldiIniState]=useState(()=>({...SALDI_INIZIALI}));
   const [mappa,setMappaState]=useState({});
   const [categorie,setCategorieState]=useState(()=>{ const c=seedCategorie(); setCatNames(c); return c; });
   const [budget,setBudgetState]=useState({});
@@ -4462,6 +4636,8 @@ function App({authUser, onLogout}){
       });
       const ctref=db.ref('conti');
       ctref.on('value',snap=>{ const v=snap.val(); if(v==null){ ctref.set(CONTI); return; } const arr=(Array.isArray(v)?v.filter(Boolean):Object.values(v)); applyConti(arr); setContiState(arr); });
+      const siref=db.ref('saldiIniziali');
+      siref.on('value',snap=>{ const v=snap.val(); if(v==null){ siref.set(saldiIniToFB(SALDI_INIZIALI)); return; } applySaldiIni(v); setSaldiIniState({...SALDI_INIZIALI}); });
       db.ref('mappaCategorie').on('value',snap=>{ const m=snap.val()||{}; setMappaCat(m); setMappaState(m); });
       const catref=db.ref('categorieRF');
       catref.on('value',snap=>{ const v=snap.val(); if(v==null){ catref.set(seedCategorie()); return; } const arr=Array.isArray(v)?v.filter(Boolean):Object.values(v); setCatNames(arr); setCategorieState(arr); });
@@ -4526,6 +4702,13 @@ function App({authUser, onLogout}){
     setContiState(list);
     if(firebaseReady){ db.ref('conti').set(list); }
     else { saveContiLS(list); }
+  };
+  const setSaldiIni = obj => {
+    const clean=normSaldiIni(obj);
+    applySaldiIni(clean);
+    setSaldiIniState(clean);
+    if(firebaseReady){ db.ref('saldiIniziali').set(saldiIniToFB(clean)); }
+    else { saveSaldiIniLS(clean); }
   };
   const setCategorie = list => {
     setCatNames(list);
@@ -4603,6 +4786,7 @@ function App({authUser, onLogout}){
           {page==='rendiconto' && <PageRendiconto scritture={scritture} categorie={categorie} updateScritture={updateScritture} toast={showToast}/>}
           {page==='controller' && <PageController scritture={scritture} categorie={categorie} budget={budget} setBudget={setBudget}/>}
           {page==='budget' && <PageBudget scritture={scritture} budgets={budgets} setBudgets={setBudgets} toast={showToast}/>}
+          {page==='liquidita' && <PageLiquidita saldi={saldi} scritture={scritture} conti={conti} setConti={setConti} saldiIni={saldiIni} setSaldiIni={setSaldiIni} toast={showToast}/>}
           {page==='pianoconti' && <PagePianoConti saldi={saldi} conti={conti} setConti={setConti} toast={showToast}/>}
           {page==='cespiti' && <PageCespiti cespiti={cespiti} setCespiti={updateCespiti} toast={showToast}/>}
           {page==='ammortamenti' && <PageAmmortamenti cespiti={cespiti} onAdd={addScrittura} updateCespiti={updateCespiti} toast={showToast}/>}
