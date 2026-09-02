@@ -988,7 +988,7 @@ const SEZ_ORD = [{k:'entrata',l:'Entrate'},{k:'uscita',l:'Uscite'},{k:'investime
 
 /* Selettore categoria: raggruppato per sezione (entrate/uscite/…) e,
    dentro ogni gruppo, ordinato per tipo di operazione (ricavi prima dei costi) */
-function CatSelect({value, onChange, categorie, sezioni, style}){
+function CatSelect({value, onChange, categorie, sezioni, style, onCreate}){
   const list = (categorie||[]).filter(c=>!sezioni || sezioni.includes(c.sezione));
   const gruppi = SEZ_ORD.map(g=>({
     ...g,
@@ -997,16 +997,65 @@ function CatSelect({value, onChange, categorie, sezioni, style}){
       .sort((a,b)=>(TIPO_ORD[a.tipo]-TIPO_ORD[b.tipo]) || a.nome.localeCompare(b.nome,'it'))
   })).filter(g=>g.items.length);
   const orfane = list.filter(c=>!SEZ_ORD.some(g=>g.k===c.sezione)).sort((a,b)=>a.nome.localeCompare(b.nome,'it'));
+  // se il valore corrente è stato escluso dal filtro di sezione, mostralo comunque
+  const fuori = value && !list.some(c=>nk(c.nome)===nk(value));
   return (
-    <select value={value} onChange={e=>onChange(e.target.value)} style={style}>
+    <select value={value} style={style}
+      onChange={e=>{ const v=e.target.value; if(v==='__new__'){ onCreate&&onCreate(); return; } onChange(v); }}>
       <option value="">— nessuna —</option>
+      {fuori && <optgroup label="Attuale"><option value={value}>{value}</option></optgroup>}
       {gruppi.map(g=>(
         <optgroup key={g.k} label={g.l}>
           {g.items.map(c=><option key={c.nome} value={c.nome}>{c.nome}{c.tipo?' · '+c.tipo:''}</option>)}
         </optgroup>
       ))}
       {orfane.length>0 && <optgroup label="Altre">{orfane.map(c=><option key={c.nome} value={c.nome}>{c.nome}</option>)}</optgroup>}
+      {onCreate && <optgroup label="—"><option value="__new__">＋ Crea nuova categoria…</option></optgroup>}
     </select>
+  );
+}
+
+/* Modale: crea una categoria di rendiconto senza uscire dalla pagina corrente */
+function NuovaCategoriaModal({nomeDefault, sezioneDefault, categorie, onSave, onClose, toast}){
+  const [nome,setNome]=useState(nomeDefault||'');
+  const [sez,setSez]=useState(sezioneDefault||'uscita');
+  function salva(){
+    const n=(nome||'').trim();
+    if(!n){ toast&&toast('Inserisci il nome della categoria','error'); return; }
+    if((categorie||[]).some(c=>nk(c.nome)===nk(n))){ toast&&toast('Categoria già esistente','error'); return; }
+    onSave({nome:n,sezione:sez});
+  }
+  return (
+    <div className="modal-bg" onClick={e=>{if(e.target.className==='modal-bg')onClose();}}>
+      <div className="modal" style={{maxWidth:460}}>
+        <div className="modal-head">
+          <h3>Nuova categoria rendiconto</h3>
+          <button className="btn ghost sm" onClick={onClose}>✕</button>
+        </div>
+        <div className="modal-body">
+          <div className="form-grid">
+            <div className="form-row">
+              <label>Nome <span className="req">*</span></label>
+              <input type="text" value={nome} onChange={e=>setNome(e.target.value)} autoFocus
+                placeholder="ES. ABBONAMENTI" onKeyDown={e=>{if(e.key==='Enter')salva();}}/>
+            </div>
+            <div className="form-row">
+              <label>Sezione</label>
+              <select value={sez} onChange={e=>setSez(e.target.value)}>
+                {SEZ_ORD.map(g=><option key={g.k} value={g.k}>{g.l}</option>)}
+              </select>
+            </div>
+          </div>
+          <div style={{fontSize:12,color:'var(--ink-3)',marginTop:12,fontStyle:'italic'}}>
+            La sezione decide dove finisce la categoria nel rendiconto finanziario. “Interne” resta fuori dal flusso di cassa (giroconti, movimenti non operativi).
+          </div>
+        </div>
+        <div className="modal-foot">
+          <button className="btn ghost" onClick={onClose}>Annulla</button>
+          <button className="btn accent" onClick={salva}>Crea categoria</button>
+        </div>
+      </div>
+    </div>
   );
 }
 function seedCategorie(){
@@ -3495,7 +3544,17 @@ function PageImport({onAddMany, mappa, setMappa, categorie, setCategorie, toast}
   const [fileName,setFileName]=useState('');
   const [sheets,setSheets]=useState([]);
   const [wbRef,setWbRef]=useState(null);
+  const [nuovaCat,setNuovaCat]=useState(null);   // {rowIndex, nome, sezione}
   const fileRef=useRef(null);
+
+  // nk(nome) -> nome esatto in anagrafica, per riconoscere le categorie del file
+  const catEsistenti={}; const catSezioni={};
+  (categorie||[]).forEach(c=>{ if(c&&c.nome){ catEsistenti[nk(c.nome)]=c.nome; catSezioni[nk(c.nome)]=c.sezione; } });
+
+  /* sezioni ammesse per una riga: entrata → Entrate, uscita → Uscite/Investimenti,
+     giroconto tra conti di liquidità → Interne */
+  const sezioniDi = r => LIQ_CODES.includes(r.contro) ? ['interno'] : (r.tipo==='E' ? ['entrata'] : ['uscita','investimento']);
+  const sezDefaultDi = r => LIQ_CODES.includes(r.contro) ? 'interno' : (r.tipo==='E' ? 'entrata' : 'uscita');
 
   function detect(headers){
     const H=headers.map(h=>normKey(h));
@@ -3532,9 +3591,19 @@ function PageImport({onAddMany, mappa, setMappa, categorie, setCategorie, toast}
         if(col.tipo>=0){ const t=normKey(r[col.tipo]); tipo=(t.startsWith('E')||t.includes('ENTRAT')||t==='D')?'E':'U'; }
         else tipo = imp<0?'U':'E';
         imp=Math.abs(imp);
-        const cat=col.cat>=0?String(r[col.cat]||'').trim():'';
-        const contro = mappa&&mappa[normKey(cat)]!=null ? mappa[normKey(cat)] : '';
-        out.push({ data:parseDataCell(r[col.data]), cod: col.conto>=0?resolveLiq(r[col.conto]):1, tipo, cat,
+        const catFile=col.cat>=0?String(r[col.cat]||'').trim():'';
+        const cod = col.conto>=0?resolveLiq(r[col.conto]):1;
+        // la categoria del file vale solo se esiste già in anagrafica…
+        let cat = catFile && catEsistenti[nk(catFile)] ? catEsistenti[nk(catFile)] : '';
+        const contro = mappa&&mappa[normKey(catFile)]!=null ? mappa[normKey(catFile)]
+                     : (mappa&&cat&&mappa[normKey(cat)]!=null ? mappa[normKey(cat)] : '');
+        // …e solo se la sua sezione è coerente col verso della riga
+        if(cat){
+          const sez=catSezioni[nk(cat)];
+          const ok = LIQ_CODES.includes(contro) ? ['interno'] : (tipo==='E' ? ['entrata'] : ['uscita','investimento']);
+          if(sez && !ok.includes(sez)) cat='';
+        }
+        out.push({ data:parseDataCell(r[col.data]), cod, tipo, cat, catFile,
           descr: col.descr>=0?String(r[col.descr]||'').trim():'', importo:r2(imp), contro });
       }
       setRows(out);
@@ -3556,11 +3625,22 @@ function PageImport({onAddMany, mappa, setMappa, categorie, setCategorie, toast}
     e.target.value='';
   }
 
-  const setRow=(i,k,v)=>setRows(rs=>rs.map((r,j)=>j===i?{...r,[k]:v}:r));
+  const setRow=(i,k,v)=>setRows(rs=>rs.map((r,j)=>{
+    if(j!==i) return r;
+    const nr={...r,[k]:v};
+    // se cambiando verso o contropartita la categoria non appartiene più a una sezione ammessa, la azzero
+    if((k==='tipo'||k==='contro') && nr.cat){
+      const sez=(categorie||[]).find(c=>nk(c.nome)===nk(nr.cat));
+      const ok = LIQ_CODES.includes(nr.contro) ? ['interno'] : (nr.tipo==='E' ? ['entrata'] : ['uscita','investimento']);
+      if(sez && !ok.includes(sez.sezione)) nr.cat='';
+    }
+    return nr;
+  }));
   const delRow=i=>setRows(rs=>rs.filter((_,j)=>j!==i));
 
   const validi = rows.filter(r=>r.data&&r.cod&&r.contro&&r.importo>0&&r.tipo);
   const incompleti = rows.length - validi.length;
+  const senzaCat = rows.filter(r=>!r.cat && !LIQ_CODES.includes(r.contro)).length;
 
   function importa(){
     if(validi.length===0){ toast('Nessuna riga completa da importare','error'); return; }
@@ -3571,15 +3651,13 @@ function PageImport({onAddMany, mappa, setMappa, categorie, setCategorie, toast}
                           : [{c:r.contro,d:r.importo,a:0},{c:r.cod,d:0,a:r.importo}],
       origine:'manuale', tipo: isGiro(r)?'giroconto':'liquidita', cat:(r.cat||'').trim()
     }));
-    // memorizza mappatura categoria -> conto
+    // memorizza mappatura categoria -> conto (sia il nome del file sia quello scelto)
     const nuovaMappa={...(mappa||{})};
-    validi.forEach(r=>{ if(r.cat) nuovaMappa[normKey(r.cat)]=r.contro; });
-    // aggiungi categorie nuove (sezione dedotta dal tipo; interna se giroconto tra liquidità)
-    const esistenti=new Set((categorie||[]).map(c=>nk(c.nome)));
-    const daAgg=[];
-    validi.forEach(r=>{ const c=(r.cat||'').trim(); if(c && !esistenti.has(nk(c))){ esistenti.add(nk(c)); daAgg.push({nome:c,sezione:isGiro(r)?'interno':(r.tipo==='E'?'entrata':'uscita')}); } });
+    validi.forEach(r=>{
+      if(r.catFile) nuovaMappa[normKey(r.catFile)]=r.contro;
+      if(r.cat) nuovaMappa[normKey(r.cat)]=r.contro;
+    });
     onAddMany(scrit); setMappa(nuovaMappa);
-    if(daAgg.length) setCategorie([...(categorie||[]),...daAgg]);
     toast(`${scrit.length} scritture importate`,'success');
     setRows([]); setFileName(''); setSheets([]); setWbRef(null);
   }
@@ -3623,7 +3701,7 @@ function PageImport({onAddMany, mappa, setMappa, categorie, setCategorie, toast}
           <ul style={{color:'var(--ink-2)',fontSize:13,lineHeight:1.7,marginBottom:0}}>
             <li><b>Conto</b>: il conto di liquidità (BPER C/C, Prepagata, Cassa).</li>
             <li><b>Tipo</b>: Entrata o Uscita. Se manca, viene dedotto dal segno dell'importo.</li>
-            <li><b>Categoria</b>: serve a proporre in automatico il conto contabile (la mappatura viene ricordata per gli import successivi).</li>
+            <li><b>Categoria</b>: se coincide con una categoria di rendiconto già esistente viene proposta in automatico, altrimenti la riga arriva senza categoria (trattino) e la scegli tu dalla tendina. Serve anche a proporre il conto contabile, e la mappatura viene ricordata per gli import successivi.</li>
             <li><b>Importo</b>: numero positivo (il verso lo dà il Tipo).</li>
           </ul>
         </div>}
@@ -3631,7 +3709,7 @@ function PageImport({onAddMany, mappa, setMappa, categorie, setCategorie, toast}
       {rows.length>0 && <>
         <div className="card" style={{marginBottom:14,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:10}}>
           <div style={{fontSize:13,color:'var(--ink-2)'}}>
-            <b>{fileName}</b> · {rows.length} movimenti · <span style={{color:'var(--success)'}}>{validi.length} pronti</span>{incompleti>0&&<span style={{color:'var(--warn)'}}> · {incompleti} da completare (assegna la contropartita)</span>}
+            <b>{fileName}</b> · {rows.length} movimenti · <span style={{color:'var(--success)'}}>{validi.length} pronti</span>{incompleti>0&&<span style={{color:'var(--warn)'}}> · {incompleti} da completare (assegna la contropartita)</span>}{senzaCat>0&&<span style={{color:'var(--ink-3)'}}> · {senzaCat} senza categoria RF</span>}
           </div>
           <div style={{display:'flex',gap:8}}>
             <button className="btn ghost" onClick={()=>{setRows([]);setFileName('');setSheets([]);setWbRef(null);}}>Annulla</button>
@@ -3647,7 +3725,12 @@ function PageImport({onAddMany, mappa, setMappa, categorie, setCategorie, toast}
                   <td><input type="date" value={r.data} onChange={e=>setRow(i,'data',e.target.value)} style={{minWidth:130}}/></td>
                   <td><select value={r.cod} onChange={e=>setRow(i,'cod',parseInt(e.target.value))}>{CONTI.filter(c=>c.categoria==='DISP. LIQUIDE').map(c=><option key={c.codice} value={c.codice}>{c.nome}</option>)}</select></td>
                   <td><select value={r.tipo} onChange={e=>setRow(i,'tipo',e.target.value)}><option value="E">Entrata</option><option value="U">Uscita</option></select></td>
-                  <td style={{fontSize:12}}>{r.cat}</td>
+                  <td>
+                    <CatSelect value={r.cat||''} onChange={v=>setRow(i,'cat',v)} categorie={categorie}
+                      sezioni={sezioniDi(r)} style={{minWidth:170,fontSize:12}}
+                      onCreate={()=>setNuovaCat({rowIndex:i, nome:r.catFile||'', sezione:sezDefaultDi(r)})}/>
+                    {!r.cat && r.catFile && <div style={{fontSize:11,color:'var(--ink-3)',marginTop:3}} title={`Nel file: ${r.catFile}`}>— non in anagrafica: {r.catFile}</div>}
+                  </td>
                   <td><input type="text" value={r.descr} onChange={e=>setRow(i,'descr',e.target.value)} style={{minWidth:160}}/></td>
                   <td className="num">{num2(r.importo)}</td>
                   <td>
@@ -3660,8 +3743,19 @@ function PageImport({onAddMany, mappa, setMappa, categorie, setCategorie, toast}
             </tbody>
           </table>
         </div>
-        <div style={{fontSize:12,color:'var(--ink-3)',marginTop:10,fontStyle:'italic'}}>Le righe evidenziate non hanno ancora un conto contabile assegnato e non verranno importate finché non lo scegli. La scelta viene ricordata per categoria. Se come contropartita scegli un altro conto di liquidità (es. Prepagata), la riga viene registrata come <b>giroconto</b> tra i due conti ed esclusa dal rendiconto finanziario.</div>
+        <div style={{fontSize:12,color:'var(--ink-3)',marginTop:10,fontStyle:'italic'}}>Le righe evidenziate non hanno ancora un conto contabile assegnato e non verranno importate finché non lo scegli. La scelta viene ricordata per categoria. La <b>categoria rendiconto</b> propone solo le categorie già esistenti e compatibili con il verso della riga (entrate per le attive, uscite e investimenti per le passive, interne per i giroconti); le categorie presenti nel file ma non in anagrafica vengono scartate e mostrate con un trattino, e da tendina puoi crearne una nuova al volo. Se come contropartita scegli un altro conto di liquidità (es. Prepagata), la riga viene registrata come <b>giroconto</b> tra i due conti ed esclusa dal rendiconto finanziario.</div>
       </>}
+
+      {nuovaCat && <NuovaCategoriaModal
+        nomeDefault={nuovaCat.nome} sezioneDefault={nuovaCat.sezione} categorie={categorie} toast={toast}
+        onClose={()=>setNuovaCat(null)}
+        onSave={c=>{
+          setCategorie([...(categorie||[]),c]);
+          const i=nuovaCat.rowIndex;
+          setRows(rs=>rs.map((r,j)=>j===i?{...r,cat:c.nome}:r));
+          setNuovaCat(null);
+          toast&&toast(`Categoria “${c.nome}” creata`,'success');
+        }}/>}
     </div>
   );
 }
