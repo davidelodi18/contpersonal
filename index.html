@@ -4628,16 +4628,37 @@ function PageCategorie({categorie, setCategorie, scritture, updateScritture, map
   }
   function del(i){ const c=categorie[i]; if((usi[nk(c.nome)]||0)>0){ if(!window.confirm(`"${c.nome}" è usata in ${usi[nk(c.nome)]} scritture. Eliminarla comunque? Le scritture resteranno senza categoria.`)) return; } setCategorie(categorie.filter((_,j)=>j!==i)); }
 
+  /* conto contabile collegato alla categoria (mappatura usata dall'import
+     e dall'etichetta ricavo/costo nelle tendine) */
+  const contoDi = nome => { const v=(mappa||{})[normKey(nome)]; return (v==null||v==='')?'':v; };
+  function setContoDi(nome,cod){
+    const m={...(mappa||{})}; const k=normKey(nome);
+    if(cod===''||cod==null) delete m[k]; else m[k]=cod;
+    setMappa(m);
+    toast(cod===''||cod==null ? 'Collegamento rimosso' : `“${nome}” collegata a ${contoByCode[cod]?.nome||('#'+cod)}`,'success');
+  }
+  /* incoerenza fra sezione del rendiconto e natura del conto collegato */
+  function incoerenza(c){
+    const t=catTipoOf(c.nome);
+    if(!t||t==='ricavo/costo') return '';
+    if(c.sezione==='entrata' && t!=='ricavo') return `collegata a un conto di ${t}: nel rendiconto resta fra le entrate`;
+    if(c.sezione==='uscita' && t!=='costo') return `collegata a un conto di ${t}: nel rendiconto resta fra le uscite`;
+    if(c.sezione==='investimento' && t!=='investimento') return `collegata a un conto di ${t}`;
+    return '';
+  }
+
   const perSez=sez=>categorie.map((c,i)=>({...c,i})).filter(c=>c.sezione===sez);
   const senzaSez=categorie.map((c,i)=>({...c,i})).filter(c=>!SEZIONI.some(s=>s.v===c.sezione));
   const Blocco=({sez,label})=>(
     <div style={{marginBottom:18}}>
       <div className="card-title serif" style={{fontSize:15,margin:'4px 0 8px'}}>{label}</div>
       <div className="tbl-wrap"><table className="tbl">
-        <thead><tr><th>Categoria</th><th>Sezione</th><th className="num">Utilizzi</th><th></th></tr></thead>
+        <thead><tr><th>Categoria</th><th>Sezione</th><th style={{width:250}}>Conto collegato</th><th className="num">Utilizzi</th><th></th></tr></thead>
         <tbody>
-          {perSez(sez).length===0 && <tr><td colSpan="4" className="empty-state">Nessuna categoria</td></tr>}
-          {perSez(sez).map(c=>(
+          {perSez(sez).length===0 && <tr><td colSpan="5" className="empty-state">Nessuna categoria</td></tr>}
+          {perSez(sez).map(c=>{
+            const warn=incoerenza(c);
+            return (
             <tr key={c.i}>
               <td><input type="text" value={draft[c.i]!=null?draft[c.i]:c.nome}
                     onChange={e=>{const v=e.target.value; setDraft(d=>({...d,[c.i]:v}));}}
@@ -4646,10 +4667,15 @@ function PageCategorie({categorie, setCategorie, scritture, updateScritture, map
                     title="Modifica il nome e premi Invio: verrà aggiornato anche nelle scritture"
                     style={{minWidth:200}}/></td>
               <td><select value={c.sezione} onChange={e=>setSez(c.i,e.target.value)}>{SEZIONI.map(s=><option key={s.v} value={s.v}>{s.l}</option>)}</select></td>
+              <td>
+                <ContoSelect value={contoDi(c.nome)} onChange={v=>setContoDi(c.nome,v)}
+                  filter={x=>x.categoria==='RICAVI'||x.categoria==='COSTI'||x.categoria==='RICAVI/COSTI'||/^IMM\./.test(x.categoria)}/>
+                {warn && <div style={{fontSize:11,color:'var(--danger)',marginTop:3}} title={warn}>⚠ {warn}</div>}
+              </td>
               <td className="num">{usi[nk(c.nome)]||0}</td>
               <td><button className="btn danger sm" onClick={()=>del(c.i)}>✕</button></td>
             </tr>
-          ))}
+          );})}
         </tbody>
       </table></div>
     </div>
@@ -4690,7 +4716,7 @@ function PageCategorie({categorie, setCategorie, scritture, updateScritture, map
           </tbody>
         </table></div>
       </div>}
-      <div style={{fontSize:12,color:'var(--ink-3)',marginTop:6,fontStyle:'italic'}}>Per rinominare una categoria modifica il nome e premi Invio (o esci dal campo): il nuovo nome viene applicato automaticamente a tutte le scritture che la usano e alla mappatura dell'import. Esc annulla la modifica.</div>
+      <div style={{fontSize:12,color:'var(--ink-3)',marginTop:6,fontStyle:'italic'}}>Per rinominare una categoria modifica il nome e premi Invio (o esci dal campo): il nuovo nome viene applicato automaticamente a tutte le scritture che la usano e alla mappatura dell'import. Esc annulla la modifica.<br/>Il <b>conto collegato</b> è la contropartita che l'import propone per quella categoria ed è anche ciò che determina l'etichetta <i>ricavo/costo</i> nelle tendine: se non coincide con la sezione (es. categoria in Uscite collegata a un conto di ricavo) compare un avviso ⚠ e basta scegliere il conto corretto.</div>
     </div>
   );
 }
