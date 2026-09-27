@@ -967,6 +967,36 @@ table.tbl.rf-matrix.rf-fit{ min-width:0; }
   .an-editor > div:last-child { position: static; }
 }
 
+
+/* === SCHEMA DI BILANCIO (come nel gestionale futsal) === */
+.sb-page table:not(.tbl) { border-collapse: collapse; font-size: 13px; }
+.sb-page table:not(.tbl) td, .sb-page table:not(.tbl) th { padding: 6px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; text-align: left; }
+.sb-page table:not(.tbl) th { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-3); font-weight: 600; background: var(--panel-2); }
+.sb-page table:not(.tbl) td.num, .sb-page table:not(.tbl) th.num { text-align: right; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sb-page td.neg { color: var(--danger); }
+.sb-page .icon-btn { background: none; border: none; padding: 0 3px; font-size: 12px; line-height: 1; cursor: pointer; color: var(--ink-3); }
+.sb-page .icon-btn:hover { color: var(--ink); }
+.sb-page input[type=text], .sb-page input:not([type]) { width: auto; }
+.sb-page input:not([type]) { padding: 6px 9px; border: 1px solid var(--rule-2); border-radius: var(--radius); background: var(--panel); color: var(--ink); font-size: 13px; }
+.sb-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.sb-periodo { width: auto !important; max-width: 290px; font-weight: 600; }
+@media (max-width: 768px) {
+  .sb-tabs { flex-wrap: nowrap; overflow-x: auto; margin-left: -14px; margin-right: -14px; padding: 0 14px 4px; scrollbar-width: none; }
+  .sb-tabs::-webkit-scrollbar { display: none; }
+  .sb-tabs .btn { flex: 0 0 auto; white-space: nowrap; padding: 8px 12px; font-size: 12.5px; }
+  .sb-periodo { max-width: none; flex: 1 1 100%; }
+  .sb-page .page-head .btn { flex: 1 1 auto; justify-content: center; }
+  .sb-page .card { padding: 12px; }
+  .sb-page .card > table:not(.tbl) td { padding: 6px 4px; }
+  .sb-page .card > table:not(.tbl) td[style*="padding-left: 52px"], .sb-page .card > table:not(.tbl) td[style*="padding-left: 68px"] { padding-left: 22px !important; }
+  .sb-page .card > table:not(.tbl) td[style*="padding-left: 44px"], .sb-page .card > table:not(.tbl) td[style*="padding-left: 40px"], .sb-page .card > table:not(.tbl) td[style*="padding-left: 34px"] { padding-left: 18px !important; }
+  .sb-page .card > table:not(.tbl) td[style*="padding-left: 26px"] { padding-left: 12px !important; }
+  .sb-page input:not([type]) { font-size: 16px; }
+  .sb-page select { max-width: 100% !important; }
+  .sb-page .icon-btn { padding: 4px 6px; font-size: 14px; }
+  .sb-page .kpi .value { font-size: 19px; }
+}
+
 /* === LISTE A SCHEDE (solo telefono) === */
 .only-m, .only-mc { display: none; }
 .m-list { display: flex; flex-direction: column; gap: 8px; }
@@ -6972,6 +7002,2278 @@ function PageAnalisi({ scritture, cespiti, budgets, categorie, toast }) {
 }
 
 
+// ============================================================
+// PAGINA: SCHEMA DI BILANCIO (prospetti civilistici)
+// Separa il piano dei conti GESTIONALE (per registrare) dallo
+// SCHEMA DI BILANCIO (per esporre). Ogni voce di schema raccoglie
+// uno o piu' conti, ciascuno con segno +1 (naturale) o -1 (invertito).
+// Comprende Stato Patrimoniale, Conto Economico e Rendiconto
+// Finanziario a tre aree (metodo diretto e indiretto).
+// Salvataggio: schemaBilancio/json su Firebase (stringa JSON, per evitare
+// le conversioni array->oggetto di Realtime Database), oppure in locale.
+// Porting dal gestionale futsal: qui non ci sono stagioni, il periodo è
+// dall'apertura alla data scelta ("Situazione al").
+// ============================================================
+
+const SB_PATH = "schemaBilancio";
+const SB_LS = "contabilita_personale_schema_v1";
+const fmt = (n, dec = 2) => (n === null || n === undefined || isNaN(n)) ? "—" : numIT(n, dec);
+const fmtP = (n, dec = 2) => {
+  if (n === null || n === undefined || isNaN(n)) return "—";
+  const x = Number(n);
+  const s = numIT(Math.abs(x), dec);
+  return (x < 0 && Math.abs(x) >= Math.pow(10, -dec) / 2) ? "(" + s + ")" : s;
+};
+const sbSlug = (s) => String(s || "").replace(/[^\w\-]+/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
+
+const SB_NATURE = [
+  ["liquidita",        "Disponibilita' liquide"],
+  ["circolante",       "Capitale circolante (crediti/debiti)"],
+  ["immobilizzazioni", "Immobilizzazioni (costo storico)"],
+  ["fondo",            "Fondi ammortamento (non monetari)"],
+  ["patrimonio",       "Patrimonio netto e finanziamenti"],
+  ["economico",        "Conto economico"],
+];
+
+// --- schema civilistico di default (art. 2424 / 2425 in forma abbreviata) ---
+function schemaDefault() {
+  const v = (codice, nome) => ({ id: uid(), codice, nome, conti: [] });
+  return {
+    sp: [
+      { id: uid(), codice: "B", nome: "Immobilizzazioni", lato: "attivo", voci: [
+        v("II", "Beni durevoli (immobilizzazioni materiali)"),
+        v("III", "Investimenti finanziari (immobilizzazioni finanziarie)"),
+      ]},
+      { id: uid(), codice: "C", nome: "Attivo circolante", lato: "attivo", voci: [
+        v("II", "Crediti"),
+        v("IV", "Disponibilita' liquide"),
+      ]},
+      { id: uid(), codice: "A", nome: "Patrimonio netto", lato: "passivo", voci: [
+        v("I", "Capitale iniziale"),
+        v("VI", "Riserve"),
+        v("VIII", "Utili (perdite) portati a nuovo"),
+        Object.assign(v("IX", "Risultato d'esercizio"), { speciale: "risultato" }),
+      ]},
+      { id: uid(), codice: "D", nome: "Debiti", lato: "passivo", voci: [
+        v("", "Debiti"),
+      ]},
+      { id: uid(), codice: "", nome: "Conti transitori", lato: "passivo", voci: [
+        v("", "Bilancio di apertura / transitori"),
+      ]},
+    ],
+    ce: [
+      { id: uid(), codice: "A", nome: "Entrate e proventi", segno: 1, voci: [
+        v("1", "Redditi da lavoro"),
+        v("5", "Altri proventi (famiglia, rimborsi, varie)"),
+      ]},
+      { id: uid(), codice: "B", nome: "Costi", segno: -1, voci: [
+        v("6", "Acquisti per lavoro e studio"),
+        v("7", "Servizi e spese bancarie"),
+        v("10", "Ammortamenti e svalutazioni"),
+        v("14", "Spese diverse"),
+      ]},
+      { id: uid(), codice: "C", nome: "Proventi e oneri finanziari", segno: 1, voci: [
+        v("16", "Proventi e oneri finanziari"),
+      ]},
+      { id: uid(), codice: "E", nome: "Proventi e oneri straordinari", segno: 1, voci: [
+        v("", "Sopravvenienze e rettifiche"),
+      ]},
+    ],
+    rf: {
+      aree: [
+        { id: uid(), codice: "A", nome: "Flusso della gestione corrente", voci: [] },
+        { id: uid(), codice: "B", nome: "Flusso dell'attivita' di investimento", voci: [] },
+        { id: uid(), codice: "C", nome: "Flusso dell'attivita' di finanziamento", voci: [] },
+      ],
+      natura: {},   // { codiceConto: "liquidita" | "circolante" | ... }
+    },
+  };
+}
+
+// Garantisce che uno schema caricato da Firebase abbia tutte le sezioni.
+// Migra anche il vecchio formato del rendiconto (categorie assegnate direttamente
+// all'area, senza sottovoci) verso il nuovo formato area -> voci -> categorie.
+function normalizzaSchema(s) {
+  const d = schemaDefault();
+  const out = { sp: s.sp || d.sp, ce: s.ce || d.ce, rf: s.rf || d.rf };
+  out.rf.aree = (out.rf.aree || d.rf.aree).map(a => {
+    if (a.voci) return { ...a, voci: (a.voci || []).map(v => ({ ...v, categorie: v.categorie || [] })) };
+    // "Categorie" era un nome segnaposto della vecchia migrazione: nel PDF
+    // usciva come "1. Categorie", che non dice nulla. Meglio un nome parlante.
+    const voci = (a.categorie && a.categorie.length)
+      ? [{ id: uid(), codice: "", nome: "Altri flussi non classificati", categorie: a.categorie }]
+      : [];
+    return { id: a.id, codice: a.codice, nome: a.nome, voci };
+  });
+  out.rf.natura = out.rf.natura || {};
+  return out;
+}
+
+// Natura di default di un conto, dedotta dalla categoria del piano dei conti.
+function naturaAuto(conto) {
+  const cat = ((conto && conto.categoria) || "").toUpperCase();
+  if (cat === "DISP. LIQUIDE") return "liquidita";
+  if (/^IMM\./.test(cat)) return "immobilizzazioni";
+  if (cat === "RETTIFICA ATTIVO") return "fondo";
+  if (cat === "PN" || cat === "PATRIMONIO NETTO") return "patrimonio";
+  if (cat === "CREDITI" || cat === "DEBITI" || cat === "CONTO TRANSITORIO") return "circolante";
+  if (cat === "RICAVI" || cat === "COSTI" || cat === "COSTI/RICAVI" || cat === "RICAVI/COSTI") return "economico";
+  return "circolante";
+}
+
+// Regole di coerenza fra categoria di cassa e sottovoce del rendiconto.
+// Usate sia dagli avvisi (che le segnalano) sia dalla correzione automatica
+// (che le applica): una sola fonte, cosi' non possono divergere.
+// auto:false = la regola segnala ma non sposta niente da sola. E' il caso degli
+// sponsor: "SPONSORIZZAZIONI SOCIAL" e' un costo, e una regola cieca sul nome
+// lo sposterebbe dentro gli incassi. Quel caso lo decide una persona.
+const REGOLE_CAT_RF = [
+  { cat: /COMMERCIALIST/, voce: /commercialist|servizi|fornitor|altri pagament/i, attesa: 'una voce di pagamenti a fornitori/servizi', auto: true },
+  { cat: /RITENUT/,       voce: /impost|ritenut/i,             attesa: '"Imposte/ritenute pagate"',   auto: true },
+  { cat: /DIVIDEND/,      voce: /dividend|mezzi propri/i,      attesa: '"Mezzi propri - Dividendi"',  auto: true },
+  { cat: /SPONSOR/,       voce: /sponsor/i,                    attesa: '"Incassi da sponsor"',        auto: false },
+];
+
+// Rinumera 1..n le sottovoci di ogni area del rendiconto. Senza questo, una
+// voce aggiunta a mano resta senza codice e nel PDF esce senza numero
+// in mezzo a voci numerate (era il caso di "Incassi da sponsor").
+function rinumeraVociRF(s) {
+  (s.rf?.aree || []).forEach(a => {
+    (a.voci || []).forEach((v, i) => { v.codice = String(i + 1); });
+  });
+  return s;
+}
+
+// Calcola le correzioni di classificazione applicabili allo schema.
+// Funzione pura: restituisce lo schema corretto e l'elenco di cosa cambia,
+// senza scrivere nulla. Serve sia al pulsante (che applica) sia alla UI
+// (che deve sapere in anticipo se c'e' qualcosa da correggere).
+function calcolaCorrezioniSchema(schema, contiMap) {
+  if (!schema) return { schema: null, azioni: [] };
+  const s = JSON.parse(JSON.stringify(schema));
+  const azioni = [];
+  const nomeConto = (c) => (contiMap?.[Number(c)]?.nome || `Conto ${c}`).trim();
+
+
+  // 1) Conto economico: le ritenute escono dalla voce delle imposte.
+  const trovaVoceCE = (re) => {
+    for (const cl of (s.ce || [])) {
+      const v = (cl.voci || []).find(x => re.test(x.nome || ""));
+      if (v) return v;
+    }
+    return null;
+  };
+  const destServizi = trovaVoceCE(/per servizi/i) || trovaVoceCE(/oneri diversi/i);
+  (s.ce || []).forEach(cl => {
+    if (!/impost/i.test(cl.nome || "")) return;
+    (cl.voci || []).forEach(v => {
+      if (v === destServizi) return;
+      // stesso trattamento per i conti agganciati alla voce e per quelli
+      // dentro le sue sotto-voci
+      const estrai = (contenitore, etichetta) => {
+        const restano = [];
+        (contenitore.conti || []).forEach(x => {
+          if (/RITENUT/.test(nomeConto(x.c).toUpperCase()) && destServizi) {
+            destServizi.conti = destServizi.conti || [];
+            if (!destServizi.conti.some(y => Number(y.c) === Number(x.c))) destServizi.conti.push(x);
+            azioni.push(`CE · conto ${x.c} ${nomeConto(x.c)}: da "${etichetta}" a "${destServizi.nome}"`);
+          } else restano.push(x);
+        });
+        contenitore.conti = restano;
+      };
+      estrai(v, v.nome);
+      (v.sottovoci || []).forEach(sv => estrai(sv, `${v.nome} · ${sv.nome}`));
+    });
+  });
+
+  // 2) Rendiconto: ogni categoria va sulla sottovoce che la descrive,
+  //    cercando la destinazione nella stessa area (il flusso non cambia area).
+  (s.rf?.aree || []).forEach(a => {
+    (a.voci || []).forEach(v => {
+      const restano = [];
+      (v.categorie || []).forEach(c => {
+        const r = REGOLE_CAT_RF.find(x => x.auto && x.cat.test(String(c).toUpperCase()) && !x.voce.test(v.nome || ""));
+        const dest = r ? (a.voci || []).find(x => x !== v && r.voce.test(x.nome || "")) : null;
+        if (dest) {
+          dest.categorie = [...new Set([...(dest.categorie || []), c])].sort();
+          azioni.push(`RF · categoria "${c}": da "${v.nome}" a "${dest.nome}"`);
+        } else restano.push(c);
+      });
+      v.categorie = restano;
+    });
+  });
+
+  // 3) Il segnaposto "Categorie": eliminato se ormai vuoto, altrimenti rinominato.
+  (s.rf?.aree || []).forEach(a => {
+    a.voci = (a.voci || []).filter(v => {
+      if (!/^categorie$/i.test((v.nome || "").trim())) return true;
+      if (!(v.categorie || []).length) {
+        azioni.push(`RF · area ${a.codice || a.nome}: rimossa la sottovoce segnaposto "Categorie", ormai vuota`);
+        return false;
+      }
+      azioni.push(`RF · area ${a.codice || a.nome}: "Categorie" rinominata "Altri flussi non classificati"`);
+      v.nome = "Altri flussi non classificati";
+      return true;
+    });
+  });
+
+  // 4) Rinumerazione finale: nessuna voce resta senza numero nel PDF.
+  const primaDeiNumeri = JSON.stringify((s.rf?.aree || []).map(a => (a.voci || []).map(v => v.codice)));
+  rinumeraVociRF(s);
+  if (JSON.stringify((s.rf?.aree || []).map(a => (a.voci || []).map(v => v.codice))) !== primaDeiNumeri) {
+    azioni.push("RF · sottovoci rinumerate 1..n in ogni area");
+  }
+  return { schema: s, azioni };
+}
+
+// Proposta di mappatura automatica: assegna i conti alle voci in base
+// alla categoria del piano dei conti. I fondi ammortamento vanno alla
+// stessa voce del cespite che rettificano.
+function proponiMappatura(schema, conti) {
+  const s = JSON.parse(JSON.stringify(schema));
+  const trova = (prosp, re) => {
+    for (const cl of s[prosp]) {
+      const v = (cl.voci || []).find(x => x.tipo !== "sottosezione" && !x.speciale && re.test(x.nome || ""));
+      if (v) return v;
+    }
+    return null;
+  };
+  const gia = new Set();
+  ["sp","ce"].forEach(p => s[p].forEach(c => (c.voci || []).forEach(v => {
+    (v.conti || []).forEach(x => gia.add(Number(x.c)));
+    (v.sottovoci || []).forEach(sv => (sv.conti || []).forEach(x => gia.add(Number(x.c))));
+  })));
+  const put = (voce, codice, segno) => {
+    if (!voce || gia.has(Number(codice))) return;
+    voce.conti = voce.conti || [];
+    voce.conti.push({ c: Number(codice), s: segno });
+    gia.add(Number(codice));
+  };
+  const mater    = trova("sp", /materiali|beni durevoli/i);
+  const finanzSP = trova("sp", /finanziari/i);
+  const crediti  = trova("sp", /^crediti/i);
+  const liquide  = trova("sp", /liquid/i);
+  const capitale = trova("sp", /capitale/i);
+  const riserve  = trova("sp", /riserv/i);
+  const aNuovo   = trova("sp", /a nuovo/i) || riserve;
+  const debiti   = trova("sp", /^debiti/i);
+  const transit  = trova("sp", /transitor|apertura/i);
+  const lavoro   = trova("ce", /lavoro|redditi/i);
+  const altriRic = trova("ce", /altri proventi|altri ricavi/i);
+  const acquisti = trova("ce", /acquisti|materie/i);
+  const servizi  = trova("ce", /servizi/i);
+  const ammort   = trova("ce", /ammortament/i);
+  const diverse  = trova("ce", /diverse|oneri diversi/i);
+  const finanzCE = trova("ce", /finanziar/i);
+  const straord  = trova("ce", /sopravven|straordinar/i);
+
+  (conti || []).forEach(c => {
+    const cod = Number(c.codice);
+    const cat = (c.categoria || "").toUpperCase();
+    const nome = (c.nome || "").toUpperCase();
+    if (cat === "IMM. MATERIALI" || cat === "IMM. IMMATERIALI") put(mater, cod, 1);
+    else if (cat === "IMM. FINANZIARIE") put(finanzSP || mater, cod, 1);
+    // il fondo segue il bene che rettifica: segno naturale, avendo saldo AVERE si deduce da solo
+    else if (cat === "RETTIFICA ATTIVO") put(mater, cod, 1);
+    else if (cat === "CREDITI") put(crediti, cod, 1);
+    else if (cat === "DISP. LIQUIDE") put(liquide, cod, 1);
+    else if (cat === "DEBITI") put(debiti, cod, 1);
+    else if (cat === "CONTO TRANSITORIO") put(transit || debiti, cod, 1);
+    else if (cat === "PATRIMONIO NETTO" || cat === "PN") {
+      if (nome.includes("CAPITALE")) put(capitale, cod, 1);
+      else if (nome.includes("RISERV")) put(riserve, cod, 1);
+      // utile/perdita riaperti dall'esercizio precedente e risultati a nuovo
+      else put(aNuovo, cod, 1);
+    }
+    else if (cat === "RICAVI" || cat === "RICAVI/COSTI" || cat === "COSTI/RICAVI") {
+      if (nome.includes("SOPRAVVENIEN") || nome.includes("RETTIFICH")) put(straord, cod, 1);
+      else if (nome.includes("STIPEND") || nome.includes("RIPETIZIONI") || nome.includes("LAVORO")) put(lavoro || altriRic, cod, 1);
+      else put(altriRic, cod, 1);
+    }
+    else if (cat === "COSTI") {
+      if (nome.startsWith("AMMORTAMENTO") || nome.startsWith("SVALUTAZIONE")) put(ammort, cod, 1);
+      else if (nome.includes("SOPRAVVENIEN")) put(straord, cod, 1);
+      else if (nome.includes("INTERESS") || nome.includes("FINANZIAR")) put(finanzCE, cod, 1);
+      else if (nome.includes("SPESE C/C") || nome.includes("COMMISSION") || nome.includes("BANCA")) put(servizi || diverse, cod, 1);
+      else if (nome.includes("ACQUIST")) put(acquisti || diverse, cod, 1);
+      else put(diverse, cod, 1);
+    }
+  });
+  return s;
+}
+
+// Calcola i valori dei prospetti a partire dallo schema e dai mastrini.
+// Convenzione: saldo = dare - avere.
+//  - classi orientate DARE (attivo, costi)   -> valore = +saldo * segnoConto
+//  - classi orientate AVERE (passivo, ricavi) -> valore = -saldo * segnoConto
+function calcolaProspetti(schema, mastrini) {
+  const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
+  const saldi = {}, nomiConto = {};
+  (mastrini || []).forEach(m => {
+    saldi[Number(m.codice)] = m.saldo;
+    nomiConto[Number(m.codice)] = (m.nome || "").trim();
+  });
+
+  const dettaglioDi = (voce, orient) => (voce.conti || []).map(x => ({
+    c: Number(x.c), s: Number(x.s) || 1, nome: nomiConto[Number(x.c)] || `Conto ${x.c}`,
+    valore: r2(((orient === "dare" ? 1 : -1) * (saldi[Number(x.c)] || 0)) * (Number(x.s) || 1)),
+  }));
+  // Terzo livello (art. 2424): una voce puo' articolarsi in sotto-voci con un
+  // proprio subtotale — "II. Immobilizzazioni materiali" che si apre in
+  // "1) Terreni e fabbricati", "2) Impianti e macchinario" e cosi' via.
+  // Il totale della voce e' la somma dei conti agganciati direttamente piu'
+  // quelli delle sue sotto-voci, quindi le classi e le quadrature non cambiano.
+  const sottovociDi = (voce, orient) => (voce.sottovoci || []).map(sv => {
+    const dettaglio = dettaglioDi(sv, orient);
+    return { ...sv, dettaglio, valore: r2(dettaglio.reduce((s, d) => s + d.valore, 0)) };
+  });
+  const valoreVoce = (voce, orient) => r2(
+    dettaglioDi(voce, orient).reduce((s, d) => s + d.valore, 0) +
+    sottovociDi(voce, orient).reduce((s, sv) => s + sv.valore, 0)
+  );
+
+  const ce = (schema.ce || []).map(cl => {
+    const orient = cl.segno >= 0 ? "avere" : "dare";
+    const voci = (cl.voci || []).map(v => ({
+      ...v, valore: valoreVoce(v, orient), dettaglio: dettaglioDi(v, orient),
+      sottovoci: sottovociDi(v, orient),
+    }));
+    return { ...cl, voci, totale: r2(voci.reduce((s, v) => s + v.valore, 0)) };
+  });
+  const risultato = r2(ce.reduce((s, cl) => s + (cl.segno >= 0 ? cl.totale : -cl.totale), 0));
+
+  const sp = (schema.sp || []).map(cl => {
+    const orient = cl.lato === "attivo" ? "dare" : "avere";
+    const voci = (cl.voci || []).map(v => ({
+      ...v,
+      valore: v.speciale === "risultato" ? risultato : valoreVoce(v, orient),
+      dettaglio: v.speciale === "risultato" ? [] : dettaglioDi(v, orient),
+      sottovoci: v.speciale === "risultato" ? [] : sottovociDi(v, orient),
+    }));
+    return { ...cl, voci, totale: r2(voci.reduce((s, v) => s + v.valore, 0)) };
+  });
+  const totAttivo  = r2(sp.filter(c => c.lato === "attivo").reduce((s, c) => s + c.totale, 0));
+  const totPassivo = r2(sp.filter(c => c.lato === "passivo").reduce((s, c) => s + c.totale, 0));
+
+  return { sp, ce, risultato, totAttivo, totPassivo, sbilancio: r2(totAttivo - totPassivo) };
+}
+
+// Controlli: conti movimentati non assegnati, conti assegnati piu' volte.
+function controlliSchema(schema, mastrini, esclusi) {
+  const assegnati = {};
+  ["sp","ce"].forEach(p => (schema[p] || []).forEach(cl => (cl.voci || []).forEach(v => {
+    const registra = (conti, dove) => (conti || []).forEach(x => {
+      const k = Number(x.c);
+      if (!assegnati[k]) assegnati[k] = [];
+      assegnati[k].push(dove);
+    });
+    registra(v.conti, `${p.toUpperCase()} ${cl.codice} - ${v.nome}`);
+    // anche i conti agganciati alle sotto-voci sono assegnati a tutti gli effetti:
+    // senza questo risulterebbero "mancanti" e riassegnabili una seconda volta
+    (v.sottovoci || []).forEach(sv => registra(sv.conti, `${p.toUpperCase()} ${cl.codice} - ${v.nome} · ${sv.nome}`));
+  })));
+  const escSet = new Set((esclusi || []).map(Number));
+  const mancanti = (mastrini || [])
+    .filter(m => Math.abs(m.saldo) > 0.005 && !assegnati[Number(m.codice)] && !escSet.has(Number(m.codice)))
+    .map(m => ({ codice: Number(m.codice), nome: (m.nome || "").trim(), saldo: m.saldo }));
+  const doppi = Object.entries(assegnati)
+    .filter(([, dove]) => dove.length > 1)
+    .map(([c, dove]) => ({ codice: Number(c), dove }));
+  return { mancanti, doppi, assegnati };
+}
+
+// ---------- RENDICONTO FINANZIARIO ----------
+
+// Metodo DIRETTO: raggruppa i flussi monetari per categoria di movimento
+// e li porta nell'area a cui la categoria e' assegnata.
+// Disponibilita' liquide per singolo conto di cassa/banca (apertura e chiusura del periodo).
+function disponibilitaLiquidePerConto(scritture) {
+  const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
+  const byCod = {};
+  (LIQ_CODES || []).forEach(cod => { byCod[cod] = { codice: cod, nome: ((contoByCode[cod] && contoByCode[cod].nome) || ("Conto " + cod)).trim(), apertura: 0, flusso: 0 }; });
+  (scritture || []).forEach(s => {
+    const ap = isApertura(s);
+    (s.righe || []).forEach(r => {
+      const o = byCod[r.c]; if (!o) return;
+      const d = (Number(r.d) || 0) - (Number(r.a) || 0);
+      if (ap) o.apertura += d; else o.flusso += d;
+    });
+  });
+  return Object.values(byCod).map(o => ({
+    codice: o.codice, nome: o.nome, apertura: r2(o.apertura), chiusura: r2(o.apertura + o.flusso),
+  }));
+}
+
+// Raggruppa i conti di liquidita' nelle 4 righe di dettaglio richieste per il rendiconto:
+// Futsal C/C, Pos C/C, Cassa e tutte le altre disponibilita' liquide accorpate.
+function raggruppaDisponibilitaLiquide(perConto) {
+  // un rigo per ogni conto di liquidità (BPER c/c, Cassa, Prepagata…)
+  return (perConto || []).map(p => ({ nome: p.nome, apertura: p.apertura, chiusura: p.chiusura }));
+}
+
+function rendicontoDiretto(schema, scritture) {
+  const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
+  const aree = (schema.rf?.aree || []).map(a => ({
+    ...a,
+    voci: (a.voci || []).map(v => ({ ...v, categorie: v.categorie || [] })),
+  }));
+  const mappaCat = {};   // categoria -> { areaId, voceId }
+  aree.forEach(a => a.voci.forEach(v => (v.categorie || []).forEach(c => { mappaCat[c] = { areaId: a.id, voceId: v.id }; })));
+  const primaArea = aree[0];
+  const nonAssegnate = new Set();
+  const flussiCat = {};   // categoria -> importo del periodo
+
+  // Flusso di cassa di ogni scrittura: effetto netto sui conti di liquidità.
+  // Aperture escluse (sono la dotazione iniziale); i giroconti fra conti di
+  // liquidità hanno effetto netto zero e quindi spariscono da soli.
+  (scritture || []).forEach(s => {
+    if (isApertura(s)) return;
+    const liq = (s.righe || []).filter(r => (LIQ_CODES || []).includes(r.c));
+    if (!liq.length) return;
+    const v = r2(liq.reduce((t, r) => t + (Number(r.d) || 0) - (Number(r.a) || 0), 0));
+    if (Math.abs(v) < 0.005) return;
+    const cat = catOf(s) || "(senza categoria)";
+    if (!mappaCat[cat]) nonAssegnate.add(cat);
+    flussiCat[cat] = (flussiCat[cat] || 0) + v;
+  });
+
+  aree.forEach(a => {
+    a.voci.forEach(v => {
+      v.righe = (v.categorie || [])
+        .map(cat => ({ cat, val: r2(flussiCat[cat] || 0) }))
+        .sort((x, y) => x.cat.localeCompare(y.cat));
+      v.totale = r2(v.righe.reduce((s, r) => s + r.val, 0));
+    });
+    a.totale = r2(a.voci.reduce((s, v) => s + v.totale, 0));
+  });
+
+  if (primaArea) {
+    const righeNC = [...nonAssegnate]
+      .map(cat => ({ cat, val: r2(flussiCat[cat] || 0) }))
+      .filter(r => Math.abs(r.val) > 0.005)
+      .sort((x, y) => x.cat.localeCompare(y.cat));
+    if (righeNC.length) {
+      const totNC = r2(righeNC.reduce((s, r) => s + r.val, 0));
+      primaArea.voci = [...primaArea.voci,
+        { id: "_nc", codice: "", nome: "Categorie non classificate", categorie: [], righe: righeNC, totale: totNC, virtuale: true }];
+      primaArea.totale = r2(primaArea.totale + totNC);
+    }
+  }
+
+  const perConto = disponibilitaLiquidePerConto(scritture);
+  const dettaglioLiquidita = raggruppaDisponibilitaLiquide(perConto);
+  const apertura = r2(perConto.reduce((s, p) => s + p.apertura, 0));
+  const chiusura = r2(perConto.reduce((s, p) => s + p.chiusura, 0));
+  const variazioneAree = r2(aree.reduce((s, a) => s + a.totale, 0));
+  const differenzaNascosta = r2(chiusura - apertura - variazioneAree);
+  if (primaArea && Math.abs(differenzaNascosta) > 0.005) {
+    primaArea.voci = [...primaArea.voci,
+      { id: "_ln", codice: "", nome: "Differenze non classificate sui conti di liquidità", categorie: [],
+        righe: [], totale: differenzaNascosta, virtuale: true }];
+    primaArea.totale = r2(primaArea.totale + differenzaNascosta);
+  }
+  const variazione = r2(variazioneAree + differenzaNascosta);
+  return {
+    aree, apertura, variazione, chiusura,
+    nonAssegnate: [...nonAssegnate].sort(), dettaglioLiquidita, differenzaNascosta,
+  };
+}
+
+// Metodo INDIRETTO: ricostruito dalle variazioni dei saldi patrimoniali.
+// Vale l'identita' contabile: la somma delle variazioni di TUTTI i conti e' zero,
+// quindi la variazione di liquidita' e' l'opposto della somma delle variazioni
+// di tutti i conti non liquidi. La scomposizione per natura da' le tre aree.
+function rendicontoIndiretto(schema, mastriniFin, mastriniIni, contiMap) {
+  const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
+  const ini = {};
+  (mastriniIni || []).forEach(m => { ini[Number(m.codice)] = m.saldo; });
+  const natMap = (schema.rf && schema.rf.natura) || {};
+  const nat = (cod) => natMap[String(cod)] || naturaAuto(contiMap[cod]);
+
+  const b = { liquidita: 0, circolante: 0, immobilizzazioni: 0, fondo: 0, patrimonio: 0, economico: 0 };
+  const dettagli = { circolante: [], immobilizzazioni: [], fondo: [], patrimonio: [] };
+
+  (mastriniFin || []).forEach(m => {
+    const cod = Number(m.codice);
+    const delta = (m.saldo || 0) - (ini[cod] || 0);
+    if (Math.abs(delta) < 0.005) return;
+    const n = nat(cod);
+    if (b[n] === undefined) return;
+    b[n] += delta;
+    if (dettagli[n]) dettagli[n].push({ codice: cod, nome: (m.nome || "").trim(), val: r2(-delta) });
+  });
+
+  const risultato   = r2(-b.economico);
+  const ammortamenti = r2(-b.fondo);
+  const varCircolante = r2(-b.circolante);
+  const operativo   = r2(risultato + ammortamenti + varCircolante);
+  const investimenti = r2(-b.immobilizzazioni);
+  const finanziamenti = r2(-b.patrimonio);
+  const variazione  = r2(operativo + investimenti + finanziamenti);
+
+  Object.values(dettagli).forEach(l => l.sort((a, c) => Math.abs(c.val) - Math.abs(a.val)));
+
+  return {
+    risultato, ammortamenti, varCircolante, operativo, investimenti, finanziamenti,
+    variazione, variazioneLiquidita: r2(b.liquidita), dettagli,
+  };
+}
+
+// ---------- RENDICONTO RICLASSIFICATO (gestionale) ----------
+// Parte dal conto economico dello schema, lo riclassifica fino all'EBITDA e poi
+// scende verso la cassa: capitale circolante, investimenti, FCFF, gestione
+// finanziaria, FCFE, rapporti con i soci. La variazione calcolata deve coincidere
+// con la variazione effettiva della liquidita': se non coincide, c'e' un problema
+// di classificazione e lo scarto lo mostra.
+function rendicontoRiclassificato(schema, prospetti, mastriniFin, mastriniIni, contiMap) {
+  const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
+  const somma = l => r2((l || []).reduce((a, x) => a + (x.val || 0), 0));
+
+  // 1) Conto economico riclassificato, voce per voce dallo schema
+  const tipoClasse = (cl) => {
+    const nome = (cl.nome || "").toLowerCase();
+    const cod = String(cl.codice || "").toUpperCase();
+    if (/impost/.test(nome) || cod === "20" || cod === "22") return "imposte";
+    if (/straordinar/.test(nome) || cod === "E") return "straordinari";
+    if (/finanziar/.test(nome) || cod === "C") return "finanziaria";
+    if (/ammortament/.test(nome)) return "da";
+    return cl.segno >= 0 ? "ricavi" : "costi";
+  };
+  const ce = { ricavi: [], costi: [], da: [], finanziaria: [], straordinari: [], imposte: [] };
+  (prospetti?.ce || []).forEach(cl => {
+    const t = tipoClasse(cl);
+    const segno = cl.segno >= 0 ? 1 : -1;
+    (cl.voci || []).forEach(v => {
+      if (v.tipo === "sottosezione") return;
+      const val = r2(segno * (v.valore || 0));      // contributo al risultato
+      if (Math.abs(val) < 0.005) return;
+      let dest = t;
+      if (t === "costi" && /ammortament|svalutaz/i.test(v.nome || "")) dest = "da";
+      ce[dest].push({ nome: `${v.codice ? v.codice + ") " : ""}${v.nome}`, val });
+    });
+  });
+  const ricavi = somma(ce.ricavi), costi = somma(ce.costi);
+  const ebitda = r2(ricavi + costi);
+  const da = somma(ce.da);
+  const ebit = r2(ebitda + da);
+  const finanziaria = somma(ce.finanziaria), straordinari = somma(ce.straordinari), imposte = somma(ce.imposte);
+  const risultato = r2(ebit + finanziaria + straordinari + imposte);
+
+  // 2) Variazioni patrimoniali tra apertura e chiusura, conto per conto
+  const ini = {};
+  (mastriniIni || []).forEach(m => { ini[Number(m.codice)] = m.saldo || 0; });
+  const natMap = (schema && schema.rf && schema.rf.natura) || {};
+  const nat = (cod) => natMap[String(cod)] || naturaAuto(contiMap[cod]);
+  const g = { crediti: [], debiti: [], altroCirc: [], imm: [], fondo: [], patrimonio: [], finanziamento: [] };
+  let deltaEconomico = 0, liqIni = 0, liqFin = 0;
+  (mastriniFin || []).forEach(m => {
+    const cod = Number(m.codice);
+    const n = nat(cod);
+    if (n === "liquidita") { liqIni += ini[cod] || 0; liqFin += m.saldo || 0; return; }
+    const delta = r2((m.saldo || 0) - (ini[cod] || 0));
+    if (Math.abs(delta) < 0.005) return;
+    if (n === "economico") { deltaEconomico += delta; return; }
+    const voce = { codice: cod, nome: (m.nome || contiMap[cod]?.nome || `Conto ${cod}`).trim(), val: r2(-delta) };
+    if (n === "immobilizzazioni") { g.imm.push(voce); return; }
+    if (n === "fondo" || n === "patrimonio" || n === "finanziamento") { g[n].push(voce); return; }
+    const cat = (contiMap[cod]?.categoria || "").toUpperCase();
+    if (cat === "CREDITI") g.crediti.push(voce);
+    else if (cat === "DEBITI") g.debiti.push(voce);
+    else g.altroCirc.push(voce);
+  });
+  Object.values(g).forEach(l => l.sort((a, b) => Math.abs(b.val) - Math.abs(a.val)));
+
+  // conti economici movimentati ma non assegnati nello schema: altrimenti la cassa non quadra
+  const nonClassificato = r2(-deltaEconomico - risultato);
+
+  const varCrediti = somma(g.crediti), varDebiti = somma(g.debiti), varAltro = somma(g.altroCirc);
+  const flussoOperativo = r2(ebitda + varCrediti + varDebiti + varAltro + straordinari + imposte + nonClassificato);
+
+  const investimenti = r2(g.imm.filter(x => x.val < 0).reduce((a, x) => a + x.val, 0));
+  // cessioni, svalutazioni e fondi: al netto degli ammortamenti gia' riaggiunti sono cassa vera solo in caso di vendite
+  const altreImm = r2(g.imm.filter(x => x.val > 0).reduce((a, x) => a + x.val, 0) + somma(g.fondo) + da);
+  const fcff = r2(flussoOperativo + investimenti + altreImm);
+
+  const varFinanziamenti = somma(g.finanziamento);
+  const fcfe = r2(fcff + finanziaria + varFinanziamenti);
+
+  const distribuzioni = r2(g.patrimonio.filter(x => x.val < 0).reduce((a, x) => a + x.val, 0));
+  const apporti = r2(g.patrimonio.filter(x => x.val > 0).reduce((a, x) => a + x.val, 0));
+  const variazione = r2(fcfe + distribuzioni + apporti);
+  const variazioneEffettiva = r2(liqFin - liqIni);
+
+  return {
+    ce, ricavi, costi, ebitda, da, ebit, finanziaria, straordinari, imposte, risultato,
+    risultatoSchema: r2(prospetti?.risultato || 0),
+    dettagli: g, varCrediti, varDebiti, varAltro, nonClassificato,
+    flussoOperativo, investimenti, altreImm, fcff, varFinanziamenti, fcfe,
+    distribuzioni, apporti, variazione,
+    liqIni: r2(liqIni), liqFin: r2(liqFin), variazioneEffettiva,
+    scarto: r2(variazione - variazioneEffettiva),
+  };
+}
+
+// Righe del prospetto riclassificato, condivise tra schermo ed export.
+// tipo: "sez" titolo di sezione · "voce" riga normale · "tot" risultato intermedio ·
+// "fin" risultato finale · "det" dettaglio conto (solo se richiesto)
+function righeRfRiclassificato(R, conDettaglio) {
+  const out = [];
+  // add restituisce l'indice della riga, così i totali possono dichiarare da
+  // quali righe sono composti (campo `parti`). Serve solo per verificare se
+  // gli arrotondamenti all'unità producono una colonna che non somma a vista.
+  const add = (tipo, label, val, extra) => { out.push({ tipo, label, val, ...(extra || {}) }); return out.length - 1; };
+  const det = (lista) => { if (conDettaglio) (lista || []).forEach(d => add("det", `${d.codice != null ? d.codice + " " : ""}${d.nome}`, d.val)); };
+
+  add("sez", "CONTO ECONOMICO RICLASSIFICATO");
+  const iRic = add("voce", "Ricavi operativi", R.ricavi); det(R.ce.ricavi);
+  const iCos = add("voce", "Costi operativi", R.costi); det(R.ce.costi);
+  const iEbitda = add("tot", "EBITDA · Margine operativo lordo", R.ebitda, { parti: [iRic, iCos] });
+  const iDa = add("voce", "Ammortamenti e svalutazioni", R.da); det(R.ce.da);
+  const iEbit = add("tot", "EBIT · Risultato operativo", R.ebit, { parti: [iEbitda, iDa] });
+  const iFin = add("voce", "Gestione finanziaria", R.finanziaria); det(R.ce.finanziaria);
+  const iStr = add("voce", "Componenti straordinarie", R.straordinari); det(R.ce.straordinari);
+  const iImp = add("voce", "Imposte", R.imposte); det(R.ce.imposte);
+  add("fin", "RISULTATO D'ESERCIZIO", R.risultato, { parti: [iEbit, iFin, iStr, iImp] });
+
+  add("sez", "DALLA REDDITIVITÀ ALLA CASSA");
+  const iEbitda2 = add("tot", "EBITDA", R.ebitda);
+  const pOp = [iEbitda2];
+  pOp.push(add("voce", "Variazione crediti", R.varCrediti)); det(R.dettagli.crediti);
+  pOp.push(add("voce", "Variazione debiti operativi", R.varDebiti)); det(R.dettagli.debiti);
+  pOp.push(add("voce", "Altre variazioni del circolante", R.varAltro)); det(R.dettagli.altroCirc);
+  pOp.push(add("voce", "Componenti straordinarie", R.straordinari));
+  pOp.push(add("voce", "Imposte", R.imposte));
+  if (Math.abs(R.nonClassificato) >= 0.5) pOp.push(add("voce", "Componenti economiche non assegnate nello schema", R.nonClassificato));
+  const iFlusso = add("tot", "FLUSSO DI CASSA OPERATIVO", R.flussoOperativo, { parti: pOp });
+  const iInv = add("voce", "Investimenti", R.investimenti); det(R.dettagli.imm.filter(x => x.val < 0));
+  const iAltreImm = add("voce", "Disinvestimenti e altre variazioni delle immobilizzazioni", R.altreImm);
+  const iFcff = add("tot", "FREE CASH FLOW OPERATIVO (FCFF)", R.fcff, { parti: [iFlusso, iInv, iAltreImm] });
+  const iFin2 = add("voce", "Gestione finanziaria", R.finanziaria);
+  const iVarFin = add("voce", "Finanziamenti accesi / rimborsati", R.varFinanziamenti); det(R.dettagli.finanziamento);
+  const iFcfe = add("tot", "FREE CASH FLOW PER I SOCI (FCFE)", R.fcfe, { parti: [iFcff, iFin2, iVarFin] });
+  const iDist = add("voce", "Distribuzioni ai soci", R.distribuzioni); det(R.dettagli.patrimonio.filter(x => x.val < 0));
+  const iApp = add("voce", "Apporti dei soci", R.apporti); det(R.dettagli.patrimonio.filter(x => x.val > 0));
+  add("fin", "VARIAZIONE DELLE DISPONIBILITÀ LIQUIDE", R.variazione, { parti: [iFcfe, iDist, iApp] });
+  add("voce", "Disponibilità liquide iniziali", R.liqIni);
+  add("voce", "Disponibilità liquide finali", R.liqFin);
+  return out;
+}
+
+// Gli importi sono esposti in unità di euro: ogni riga viene arrotondata per
+// conto suo, quindi una colonna può non tornare di ±1 anche quando i valori
+// reali quadrano al centesimo. Qui verifico se succede davvero, per mettere la
+// nota di arrotondamento solo quando serve.
+// Forzare la somma non è un'opzione: lo scarto andrebbe scaricato su una riga
+// (gestione finanziaria, imposte, ammortamenti) che nel conto economico è
+// esposta con il suo valore arrotondato vero, e si creerebbe una discrepanza
+// peggiore fra due prospetti dello stesso documento.
+function scartiDiArrotondamento(righe) {
+  const r0 = n => { const x = Number(n) || 0; return (x < 0 ? -1 : 1) * Math.round(Math.abs(x)); };
+  return (righe || []).some(r => {
+    if (!r.parti || !r.parti.length) return false;
+    const somma = r.parti.reduce((s, i) => s + r0(righe[i].val), 0);
+    return somma !== r0(r.val);
+  });
+}
+
+// Sezione PDF del rendiconto riclassificato. Usa esattamente le righe della
+// vista a schermo (righeRfRiclassificato), così carta e video non possono
+// divergere: se cambia il prospetto, cambiano entrambi insieme.
+// `doc` e' il documento su cui appendere; `titolo` l'intestazione di sezione.
+function generaPdfRfRiclassificato(R, stagione, doc, titolo, conDettaglio) {
+  if (!R) return;
+  const W = doc.internal.pageSize.width;
+  doc.setFont("helvetica", "bold"); doc.setFontSize(14);
+  doc.text(titolo, 14, 18);
+  doc.setDrawColor(26, 26, 26); doc.line(14, 21, W - 14, 21);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(110);
+  doc.text("Dall'EBITDA al free cash flow: voci del conto economico dello schema e variazioni patrimoniali fra apertura e chiusura.",
+           14, 26);
+  doc.setTextColor(0);
+
+  // Stessa formattazione degli altri prospetti del documento: importi interi,
+  // lo zero scritto "-". Prendo money() dal builder cosi' non puo' divergere.
+  const { money, NERO, GRIGIO_CHIARO: GRIGIO } = creaPdfBuilder(stagione, "portrait", doc);
+  const body = righeRfRiclassificato(R, !!conDettaglio).map(r => {
+    const imp = money(r.val);
+    if (r.tipo === "sez") return [{ content: r.label, colSpan: 2, styles: { fontStyle: "bold", fillColor: NERO, textColor: 240 } }];
+    if (r.tipo === "det") return [{ content: `      ${r.label}`, styles: { fontSize: 7, textColor: [130, 130, 130] } },
+                                  { content: imp, styles: { fontSize: 7, textColor: [130, 130, 130] } }];
+    if (r.tipo === "tot") return [{ content: `  ${r.label}`, styles: { fontStyle: "bold", fillColor: GRIGIO } },
+                                  { content: imp, styles: { fontStyle: "bold", fillColor: GRIGIO } }];
+    if (r.tipo === "fin") return [{ content: `  ${r.label}`, styles: { fontStyle: "bold", fillColor: NERO, textColor: 240 } },
+                                  { content: imp, styles: { fontStyle: "bold", fillColor: NERO, textColor: 240 } }];
+    return [`     ${r.label}`, imp];
+  });
+  doc.autoTable({
+    startY: 30, head: [["Voce", "Importo"]], body, theme: "plain",
+    styles: { fontSize: 8.5, cellPadding: 1.6 },
+    headStyles: { fillColor: NERO, textColor: 240, fontStyle: "bold" },
+    columnStyles: { 0: { cellWidth: 126 }, 1: { cellWidth: 34, halign: "right" } },
+    margin: { left: (W - 160) / 2 },
+  });
+
+  const righeRf = righeRfRiclassificato(R, !!conDettaglio);
+  if (scartiDiArrotondamento(righeRf)) {
+    const yN = doc.lastAutoTable.finalY + 5;
+    doc.setFont("helvetica", "italic"); doc.setFontSize(7.5); doc.setTextColor(120);
+    doc.text("Importi in unità di euro: ogni riga è arrotondata singolarmente, quindi una somma può differire di 1 dal totale esposto. I valori reali quadrano al centesimo.",
+             (W - 160) / 2, yN);
+    doc.setFont("helvetica", "normal"); doc.setTextColor(0);
+  }
+
+  // La riga di controllo resta solo quando c'e' davvero uno scarto da spiegare.
+  if (Math.abs(R.scarto) >= 0.5) {
+    const y = doc.lastAutoTable.finalY + (scartiDiArrotondamento(righeRf) ? 14 : 8);
+    doc.setFillColor(181, 67, 67); doc.rect(14, y - 5, W - 28, 10, "F");
+    doc.setTextColor(255); doc.setFont("helvetica", "bold"); doc.setFontSize(9);
+    // Riga discorsiva: qui il segno si scrive col meno, la parentesi serve solo nelle colonne di importi
+    doc.text(`SCARTO DI ${R.scarto < 0 ? "-" : ""}${money(Math.abs(R.scarto))} RISPETTO ALLA VARIAZIONE EFFETTIVA DELLA LIQUIDITÀ`, 16, y + 2);
+    doc.setTextColor(0);
+  }
+}
+
+// Vista a schermo (componente a livello di modulo, come gli altri editor dello schema)
+function SBRfRiclassificato({ R }) {
+  const [dettaglio, setDettaglio] = useState(false);
+  if (!R) return null;
+  // m0: colonne di importi → negativi fra parentesi. m0s: righe discorsive → segno meno.
+  const m0 = (n) => { const r = Math.round(Number(n) || 0); if (r === 0) return "-";
+                      const s = Math.abs(r).toLocaleString("it-IT"); return r < 0 ? "(" + s + ")" : s; };
+  const m0s = (n) => { const r = Math.round(Number(n) || 0); return r === 0 ? "-" : r.toLocaleString("it-IT"); };
+  const righe = righeRfRiclassificato(R, dettaglio);
+  const ok = Math.abs(R.scarto) < 0.5;
+  const okCe = Math.abs(R.risultato - R.risultatoSchema) < 0.5;
+  return (
+    <div className="card" style={{ maxWidth: 640, margin: "0 auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+        <div className="card-title" style={{ margin: 0 }}>RF Riclassificato</div>
+        <label style={{ fontSize: 12.5, display: "flex", gap: 6, alignItems: "center", color: "var(--ink-2)" }}>
+          <input type="checkbox" checked={dettaglio} onChange={e => setDettaglio(e.target.checked)} />
+          Mostra i conti
+        </label>
+      </div>
+      <div style={{ fontSize: 12, color: "var(--ink-3)", margin: "6px 0 12px", lineHeight: 1.5 }}>
+        Dall'EBITDA al free cash flow. Legge le voci del conto economico dallo schema e le variazioni
+        patrimoniali tra apertura e chiusura, classificate secondo la natura dei conti impostata in Struttura RF.
+      </div>
+      <table style={{ width: "100%" }}>
+        <tbody>
+          {righe.map((r, i) => {
+            if (r.tipo === "sez") return (
+              <tr key={i}><td colSpan={2} style={{ paddingTop: i ? 18 : 4, fontFamily: "'Fraunces',serif", fontSize: 14,
+                                                  borderBottom: "1px solid var(--rule-2)" }}>{r.label}</td></tr>
+            );
+            if (r.tipo === "det") return (
+              <tr key={i}>
+                <td style={{ paddingLeft: 22, fontSize: 11.5, color: "var(--ink-3)" }}>{r.label}</td>
+                <td className="num" style={{ fontSize: 11.5, color: "var(--ink-3)" }}>{m0(r.val)}</td>
+              </tr>
+            );
+            const tot = r.tipo === "tot", fin = r.tipo === "fin";
+            return (
+              <tr key={i} style={tot ? { background: "var(--panel-2)" } : fin ? { background: "var(--ink)", color: "#fff" } : {}}>
+                <td style={{ paddingLeft: tot || fin ? 8 : 12, fontWeight: tot || fin ? 700 : 400 }}>
+                  {r.label}
+                </td>
+                <td className={"num " + (!fin && r.val < -0.5 ? "neg" : "")} style={{ fontWeight: tot || fin ? 700 : 400, paddingRight: 8 }}>
+                  {m0(r.val)}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {scartiDiArrotondamento(righe) && (
+        <div style={{ marginTop: 10, fontSize: 11.5, color: "var(--ink-3)", fontStyle: "italic", lineHeight: 1.5 }}>
+          Importi in unità di euro: ogni riga è arrotondata singolarmente, quindi una somma può differire
+          di 1 dal totale esposto. I valori reali quadrano al centesimo.
+        </div>
+      )}
+      <div style={{ marginTop: 14, padding: "8px 12px", borderRadius: 6, fontSize: 12.5,
+                    background: ok ? "#e7f3ea" : "var(--danger-soft)", color: ok ? "var(--accent)" : "var(--danger)" }}>
+        {ok
+          ? `✓ Quadra con la variazione effettiva della liquidità (${m0s(R.variazioneEffettiva)})`
+          : `✗ Scarto di ${m0s(R.scarto)} rispetto alla variazione effettiva della liquidità (${m0s(R.variazioneEffettiva)}): c'è un conto classificato male o una natura da correggere in Struttura RF.`}
+      </div>
+      {!okCe && (
+        <div style={{ marginTop: 8, fontSize: 12, color: "var(--danger)" }}>
+          ⚠ Il risultato riclassificato ({m0s(R.risultato)}) non coincide con quello del conto economico ({m0s(R.risultatoSchema)}).
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- EDITOR (componenti a livello di modulo: NON ricrearli dentro il
+// render della pagina, altrimenti React rimonta gli input a ogni carattere) ----------
+
+function SBPillConto({ x, nome, saldo, onSegno, onRimuovi, titoloRimuovi }) {
+  const neg = Number(x.s) < 0;
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12,
+      background: neg ? "#fbecec" : "var(--bg)", border: "1px solid var(--rule-2)",
+      borderRadius: 20, padding: "3px 8px",
+    }}>
+      <b style={{ fontFamily: "'JetBrains Mono',monospace" }}>{String(x.c).padStart(2, "0")}</b>
+      <span>{nome}</span>
+      {saldo != null && (
+        <span className="mono" style={{ color: "var(--ink-3)", fontSize: 11 }}>{fmt(saldo)}</span>
+      )}
+      <button className="icon-btn" onClick={onSegno} style={{ fontWeight: 700, color: neg ? "var(--danger)" : "var(--accent)" }}
+              title={neg ? "Segno invertito: clicca per tornare al naturale" : "Segno naturale: clicca per invertire"}>
+        {neg ? "−" : "+"}
+      </button>
+      <button className="icon-btn" onClick={onRimuovi} title={titoloRimuovi || "Rimuovi"}>✕</button>
+    </span>
+  );
+}
+
+// ---------- Costruttore PDF condiviso per i prospetti "ufficiali" (SP, CE, RF) ----------
+// Stessa grafica ovunque vengano generati: pagina Schema di Bilancio e pagina Export.
+// I numeri sono sempre arrotondati all'unita' di euro (nessun decimale).
+function creaPdfBuilder(stagione, orientamento, docEsistente) {
+  const { jsPDF } = window.jspdf;
+  const doc = docEsistente || new jsPDF({ orientation: orientamento || "portrait", unit: "mm", format: "a4" });
+  // Importi interi; lo zero si scrive "-" come nei prospetti di bilancio classici
+  // I negativi si scrivono fra parentesi tonde: -1.726 → (1.726)
+  const money = n => {
+    const x = Number(n) || 0;
+    const r = Math.sign(x) * Math.round(Math.abs(x));   // simmetrico: -676,50 → -677
+    if (r === 0) return "-";
+    const s = numIT(Math.abs(r), 0);
+    return r < 0 ? "(" + s + ")" : s;
+  };
+  const oggi = new Date().toLocaleDateString("it-IT");
+  const VERDE = [31, 79, 143], ROSSO = [192, 67, 63], NERO = [22, 34, 61];
+  const VERDE_CHIARO = [230, 237, 248], ROSSO_CHIARO = [251, 236, 236], GRIGIO_CHIARO = [238, 241, 246];
+
+  const intestazioneP = (titolo) => {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(16);
+    doc.text("CONTABILITÀ PERSONALE", 105, 18, { align: "center" });
+    doc.setFont("helvetica", "normal"); doc.setFontSize(11);
+    doc.text(`${titolo} · ${stagione}`, 105, 25, { align: "center" });
+    doc.setFontSize(9); doc.setTextColor(100);
+    doc.text(`Generato il ${oggi}`, 105, 31, { align: "center" });
+    doc.setTextColor(0);
+  };
+  const intestazioneL = (titolo) => {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(15);
+    doc.text("CONTABILITÀ PERSONALE", 148, 14, { align: "center" });
+    doc.setFont("helvetica", "normal"); doc.setFontSize(10);
+    doc.text(`${titolo} · ${stagione}`, 148, 20, { align: "center" });
+    doc.setFontSize(8); doc.setTextColor(100);
+    doc.text(`Generato il ${oggi}`, 148, 25, { align: "center" });
+    doc.setTextColor(0);
+  };
+  // tabella con intestazione colorata (verde/rosso), come in Export
+  const tabellaColorata = (body, headLabel, startY, coloreHead) => {
+    doc.autoTable({
+      startY, head: [[headLabel, "Importo"]], body, theme: "plain",
+      styles: { fontSize: 9, cellPadding: 2 },
+      headStyles: { fillColor: coloreHead, textColor: 240, fontStyle: "bold" },
+      columnStyles: { 0: { cellWidth: 140 }, 1: { cellWidth: 42, halign: "right" } },
+    });
+    return doc.lastAutoTable.finalY;
+  };
+  // barra finale nera/colorata con etichetta e valore, come RISULTATO D'ESERCIZIO in Export
+  const barraFinale = (y, label, valore, colore) => {
+    doc.setFillColor(...colore); doc.rect(14, y, doc.internal.pageSize.width - 28, 10, "F");
+    doc.setTextColor(255); doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+    doc.text(label, 16, y + 7);
+    doc.text(valore, doc.internal.pageSize.width - 16, y + 7, { align: "right" });
+    doc.setTextColor(0);
+  };
+  // righe di una macroclasse, con eventuale sottotitolo per le voci "sotto-sezione"
+  // (marcatori senza conti propri, es. Immobilizzazioni materiali / immateriali / finanziarie)
+  const righeClasse = (cl, prefissoVoce) => {
+    const rows = [[{ content: `${cl.codice ? cl.codice + ") " : ""}${cl.nome}`, styles: { fontStyle: "bold" } },
+                   { content: money(cl.totale), styles: { fontStyle: "bold" } }]];
+    (cl.voci || []).forEach(v => {
+      if (v.tipo === "sottosezione") {
+        rows.push([{ content: `   ${v.nome}`, styles: { fontStyle: "italic", textColor: [130, 130, 130] } }, ""]);
+        return;
+      }
+      rows.push([`   ${v.codice ? v.codice + prefissoVoce : ""}${v.nome}`, money(v.valore)]);
+      // sotto-voci: un livello piu' rientrato, col proprio subtotale, come
+      // "1) Terreni e fabbricati" sotto "II. Immobilizzazioni materiali"
+      (v.sottovoci || []).forEach(sv => {
+        rows.push([{ content: `      ${sv.codice ? sv.codice + ") " : ""}${sv.nome}`, styles: { textColor: [90, 90, 90] } },
+                   { content: money(sv.valore), styles: { textColor: [90, 90, 90] } }]);
+      });
+    });
+    return rows;
+  };
+
+  return { doc, money, VERDE, ROSSO, NERO, VERDE_CHIARO, ROSSO_CHIARO, GRIGIO_CHIARO,
+           intestazioneP, intestazioneL, tabellaColorata, barraFinale, righeClasse };
+}
+
+// --- Stato Patrimoniale (documento singolo) ---
+function generaPdfSP(prospetti, stagione) {
+  const b = creaPdfBuilder(stagione, "portrait");
+  b.intestazioneP("Stato Patrimoniale");
+  const attivoRows = prospetti.sp.filter(c => c.lato === "attivo").flatMap(cl => b.righeClasse(cl, ". "));
+  attivoRows.push([{ content: "TOTALE ATTIVO", styles: { fontStyle: "bold" } },
+                    { content: b.money(prospetti.totAttivo), styles: { fontStyle: "bold", fillColor: b.VERDE_CHIARO } }]);
+  let y = b.tabellaColorata(attivoRows, "ATTIVO", 36, b.VERDE);
+  const passivoRows = prospetti.sp.filter(c => c.lato === "passivo").flatMap(cl => b.righeClasse(cl, ". "));
+  passivoRows.push([{ content: "TOTALE PASSIVO E PN", styles: { fontStyle: "bold" } },
+                     { content: b.money(prospetti.totPassivo), styles: { fontStyle: "bold", fillColor: b.ROSSO_CHIARO } }]);
+  y = b.tabellaColorata(passivoRows, "PASSIVO E PATRIMONIO NETTO", y + 10, b.ROSSO);
+  if (Math.abs(prospetti.sbilancio) >= 0.01) {
+    b.barraFinale(y + 6, "SBILANCIO ATTIVO / PASSIVO", b.money(prospetti.sbilancio), b.ROSSO);
+  }
+  b.doc.save(`Stato_Patrimoniale_${sbSlug(stagione)}.pdf`);
+}
+
+// --- Conto Economico (documento singolo) ---
+function generaPdfCE(prospetti, stagione) {
+  const b = creaPdfBuilder(stagione, "portrait");
+  b.intestazioneP("Conto Economico");
+  const posCE = prospetti.ce.filter(cl => cl.segno >= 0);
+  const negCE = prospetti.ce.filter(cl => cl.segno < 0);
+  let y = 34;
+  if (posCE.length) {
+    const rows = posCE.flatMap(cl => b.righeClasse(cl, ") "));
+    rows.push([{ content: "Totale voci positive", styles: { fontStyle: "bold" } },
+               { content: b.money(posCE.reduce((s, c) => s + c.totale, 0)), styles: { fontStyle: "bold", fillColor: b.VERDE_CHIARO } }]);
+    y = b.tabellaColorata(rows, "VOCI POSITIVE", y, b.VERDE) + 10;
+  }
+  if (negCE.length) {
+    const rows = negCE.flatMap(cl => b.righeClasse(cl, ") "));
+    rows.push([{ content: "Totale voci negative", styles: { fontStyle: "bold" } },
+               { content: b.money(negCE.reduce((s, c) => s + c.totale, 0)), styles: { fontStyle: "bold", fillColor: b.ROSSO_CHIARO } }]);
+    y = b.tabellaColorata(rows, "VOCI NEGATIVE", y, b.ROSSO) + 10;
+  }
+  b.barraFinale(y, "RISULTATO D'ESERCIZIO",
+                `${b.money(prospetti.risultato)}  (${prospetti.risultato >= 0 ? "Utile" : "Perdita"})`, b.NERO);
+  b.doc.save(`Conto_Economico_${sbSlug(stagione)}.pdf`);
+}
+
+// --- Rendiconto Finanziario, metodo diretto (documento singolo) ---
+// Il metodo indiretto e' tolto per ora dai prospetti ufficiali: la funzione rimane
+// disponibile (rendicontoIndiretto) per il confronto mostrato nella pagina Schema di
+// Bilancio, semplicemente non viene stampata finche' non la si riattiva qui sotto.
+function generaPdfRF(rfDir, stagione) {
+  const b = creaPdfBuilder(stagione, "landscape");
+  b.intestazioneL("Rendiconto Finanziario · Metodo diretto");
+  const bodyD = [];
+  rfDir.aree.forEach(a => {
+    bodyD.push([{ content: `${a.codice ? a.codice + ") " : ""}${a.nome}`, styles: { fontStyle: "bold", fillColor: b.GRIGIO_CHIARO } },
+                { content: b.money(a.totale), styles: { fontStyle: "bold", fillColor: b.GRIGIO_CHIARO } }]);
+    (a.voci || []).forEach(v => {
+      bodyD.push([{ content: `   ${v.codice ? v.codice + ". " : ""}${v.nome}`, styles: { fontStyle: "bold" } },
+                  { content: b.money(v.totale), styles: { fontStyle: "bold" } }]);
+    });
+  });
+  bodyD.push([{ content: "VARIAZIONE DELLE DISPONIBILITA' LIQUIDE", styles: { fontStyle: "bold" } },
+              { content: b.money(rfDir.variazione), styles: { fontStyle: "bold", fillColor: b.VERDE_CHIARO } }]);
+  bodyD.push(["Disponibilita' liquide iniziali", b.money(rfDir.apertura)]);
+  rfDir.dettaglioLiquidita.forEach(d => bodyD.push([`      ${d.nome}`, b.money(d.apertura)]));
+  bodyD.push([{ content: "Disponibilita' liquide finali", styles: { fontStyle: "bold" } },
+              { content: b.money(rfDir.chiusura), styles: { fontStyle: "bold" } }]);
+  rfDir.dettaglioLiquidita.forEach(d => bodyD.push([`      ${d.nome}`, b.money(d.chiusura)]));
+  b.doc.autoTable({
+    startY: 30, head: [["Voce", "Importo"]], body: bodyD, theme: "plain",
+    styles: { fontSize: 9, cellPadding: 2 },
+    headStyles: { fillColor: b.VERDE, textColor: 240, fontStyle: "bold" },
+    columnStyles: { 0: { cellWidth: 108 }, 1: { cellWidth: 32, halign: "right" } },
+    // tabella stretta: la centro nella pagina invece di lasciarla appoggiata a sinistra
+    margin: { left: (b.doc.internal.pageSize.width - 140) / 2 },
+  });
+  b.doc.save(`Rendiconto_Finanziario_${sbSlug(stagione)}.pdf`);
+}
+
+
+
+// Genera in un unico PDF (3 pagine) i prospetti civilistici SP + CE + RF (metodo diretto),
+// a partire dai dati già calcolati con lo Schema di Bilancio. Usata dal pulsante
+// "PDF prospetti" della pagina Schema di Bilancio. Il metodo indiretto e' tolto per ora
+// (vedi generaPdfRF); rfInd resta come parametro per quando verrà riattivato.
+function generaPdfProspettiSchema(prospetti, rfDir, rfInd, stagione) {
+  const b = creaPdfBuilder(stagione, "portrait");
+
+  // --- Stato Patrimoniale ---
+  b.intestazioneP("Stato Patrimoniale");
+  const attivoRows = prospetti.sp.filter(c => c.lato === "attivo").flatMap(cl => b.righeClasse(cl, ". "));
+  attivoRows.push([{ content: "TOTALE ATTIVO", styles: { fontStyle: "bold" } },
+                    { content: b.money(prospetti.totAttivo), styles: { fontStyle: "bold", fillColor: b.VERDE_CHIARO } }]);
+  let y = b.tabellaColorata(attivoRows, "ATTIVO", 36, b.VERDE);
+  const passivoRows = prospetti.sp.filter(c => c.lato === "passivo").flatMap(cl => b.righeClasse(cl, ". "));
+  passivoRows.push([{ content: "TOTALE PASSIVO E PN", styles: { fontStyle: "bold" } },
+                     { content: b.money(prospetti.totPassivo), styles: { fontStyle: "bold", fillColor: b.ROSSO_CHIARO } }]);
+  y = b.tabellaColorata(passivoRows, "PASSIVO E PATRIMONIO NETTO", y + 10, b.ROSSO);
+  if (Math.abs(prospetti.sbilancio) >= 0.01) {
+    b.barraFinale(y + 6, "SBILANCIO ATTIVO / PASSIVO", b.money(prospetti.sbilancio), b.ROSSO);
+  }
+
+  // --- Conto Economico ---
+  b.doc.addPage(); b.intestazioneP("Conto Economico");
+  const posCE = prospetti.ce.filter(cl => cl.segno >= 0);
+  const negCE = prospetti.ce.filter(cl => cl.segno < 0);
+  let y2 = 34;
+  if (posCE.length) {
+    const rows = posCE.flatMap(cl => b.righeClasse(cl, ") "));
+    rows.push([{ content: "Totale voci positive", styles: { fontStyle: "bold" } },
+               { content: b.money(posCE.reduce((s, c) => s + c.totale, 0)), styles: { fontStyle: "bold", fillColor: b.VERDE_CHIARO } }]);
+    y2 = b.tabellaColorata(rows, "VOCI POSITIVE", y2, b.VERDE) + 10;
+  }
+  if (negCE.length) {
+    const rows = negCE.flatMap(cl => b.righeClasse(cl, ") "));
+    rows.push([{ content: "Totale voci negative", styles: { fontStyle: "bold" } },
+               { content: b.money(negCE.reduce((s, c) => s + c.totale, 0)), styles: { fontStyle: "bold", fillColor: b.ROSSO_CHIARO } }]);
+    y2 = b.tabellaColorata(rows, "VOCI NEGATIVE", y2, b.ROSSO) + 10;
+  }
+  b.barraFinale(y2, "RISULTATO D'ESERCIZIO",
+                `${b.money(prospetti.risultato)}  (${prospetti.risultato >= 0 ? "Utile" : "Perdita"})`, b.NERO);
+
+  // --- Rendiconto: metodo diretto ---
+  b.doc.addPage("a4", "landscape"); b.intestazioneL("Rendiconto Finanziario · Metodo diretto");
+  const bodyD = [];
+  rfDir.aree.forEach(a => {
+    bodyD.push([{ content: `${a.codice ? a.codice + ") " : ""}${a.nome}`, styles: { fontStyle: "bold", fillColor: b.GRIGIO_CHIARO } },
+                { content: b.money(a.totale), styles: { fontStyle: "bold", fillColor: b.GRIGIO_CHIARO } }]);
+    (a.voci || []).forEach(v => {
+      bodyD.push([{ content: `   ${v.codice ? v.codice + ". " : ""}${v.nome}`, styles: { fontStyle: "bold" } },
+                  { content: b.money(v.totale), styles: { fontStyle: "bold" } }]);
+    });
+  });
+  bodyD.push([{ content: "VARIAZIONE DELLE DISPONIBILITA' LIQUIDE", styles: { fontStyle: "bold" } },
+              { content: b.money(rfDir.variazione), styles: { fontStyle: "bold", fillColor: b.VERDE_CHIARO } }]);
+  bodyD.push(["Disponibilita' liquide iniziali", b.money(rfDir.apertura)]);
+  rfDir.dettaglioLiquidita.forEach(d => bodyD.push([`      ${d.nome}`, b.money(d.apertura)]));
+  bodyD.push([{ content: "Disponibilita' liquide finali", styles: { fontStyle: "bold" } },
+              { content: b.money(rfDir.chiusura), styles: { fontStyle: "bold" } }]);
+  rfDir.dettaglioLiquidita.forEach(d => bodyD.push([`      ${d.nome}`, b.money(d.chiusura)]));
+  b.doc.autoTable({
+    startY: 30, head: [["Voce", "Importo"]], body: bodyD, theme: "plain",
+    styles: { fontSize: 9, cellPadding: 2 },
+    headStyles: { fillColor: b.VERDE, textColor: 240, fontStyle: "bold" },
+    columnStyles: { 0: { cellWidth: 108 }, 1: { cellWidth: 32, halign: "right" } },
+    // tabella stretta: la centro nella pagina invece di lasciarla appoggiata a sinistra
+    margin: { left: (b.doc.internal.pageSize.width - 140) / 2 },
+  });
+
+  // Metodo indiretto: tolto per ora (vedi commento sopra la funzione).
+
+  b.doc.save(`Prospetti_Civilistici_${sbSlug(stagione)}.pdf`);
+}
+
+function SBEditorVoce({ p, cl, v, api, contiMap, contiOrdinati, assegnati }) {
+  const [forza, setForza] = useState(false);
+  const codiciQui = new Set([
+    ...(v.conti || []).map(x => Number(x.c)),
+    ...(v.sottovoci || []).flatMap(sv => (sv.conti || []).map(x => Number(x.c))),
+  ]);
+  const disponibili = contiOrdinati.filter(m => !codiciQui.has(Number(m.codice)));
+  const opzioni = forza ? disponibili : disponibili.filter(m => !assegnati[Number(m.codice)]);
+  const nNascosti = disponibili.length - opzioni.length;
+  const saldiMap = useMemo(() => { const m = {}; contiOrdinati.forEach(c => { m[c.codice] = c.saldo; }); return m; }, [contiOrdinati]);
+
+  return (
+    <div style={{ borderLeft: "2px solid var(--rule-2)", paddingLeft: 10, marginBottom: 10 }}>
+      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+        <input value={v.codice || ""} onChange={e => api.updVoce(p, cl.id, v.id, { codice: e.target.value })}
+               style={{ width: 42, textAlign: "center" }} placeholder="I" />
+        <input value={v.nome || ""} onChange={e => api.updVoce(p, cl.id, v.id, { nome: e.target.value })}
+               style={{ flex: 1, minWidth: 150 }} />
+        <button className="btn ghost sm" onClick={() => api.moveVoce(p, cl.id, v.id, -1)}>↑</button>
+        <button className="btn ghost sm" onClick={() => api.moveVoce(p, cl.id, v.id, 1)}>↓</button>
+        <button className="btn danger sm" onClick={() => api.delVoce(p, cl.id, v.id)}>✕</button>
+      </div>
+
+      {v.speciale === "risultato" ? (
+        <div style={{ fontSize: 12, color: "var(--accent)", margin: "6px 0 0 4px", fontStyle: "italic" }}>
+          Voce calcolata: riporta il risultato del Conto Economico. Non assegnare conti.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "6px 0 0 4px" }}>
+            {(v.conti || []).map(x => (
+              <SBPillConto key={x.c} x={x}
+                nome={(contiMap[x.c]?.nome || "").trim() || `Conto ${x.c}`}
+                saldo={saldiMap[x.c]}
+                onSegno={() => api.updConto(p, cl.id, v.id, x.c, Number(x.s) < 0 ? 1 : -1)}
+                onRimuovi={() => api.delConto(p, cl.id, v.id, x.c)} />
+            ))}
+          </div>
+          <div style={{ marginTop: 6, marginLeft: 4, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <select value="" onChange={e => { api.addConto(p, cl.id, v.id, e.target.value, 1); e.target.value = ""; }}
+                    style={{ fontSize: 12, maxWidth: 340 }}>
+              <option value="">+ aggiungi conto…</option>
+              {opzioni.map(m => {
+                const altrove = assegnati[Number(m.codice)];
+                return (
+                  <option key={m.codice} value={m.codice}>
+                    {String(m.codice).padStart(2, "0")} · {(m.nome || "").trim()} · {fmt(m.saldo)}
+                    {altrove ? ` ⚠ già in ${altrove.join(" · ")}` : ""}
+                  </option>
+                );
+              })}
+            </select>
+            <label style={{ fontSize: 11, color: "var(--ink-2)", display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer" }}
+                   title="Consente di scegliere anche conti già assegnati a un'altra voce (doppio conteggio volontario)">
+              <input type="checkbox" checked={forza} onChange={e => setForza(e.target.checked)} />
+              Forza doppio
+            </label>
+            {!forza && nNascosti > 0 && (
+              <span style={{ fontSize: 11, color: "var(--ink-3)" }}>{nNascosti} già assegnati nascosti</span>
+            )}
+            <button className="btn ghost sm" onClick={() => api.addSottoVoce(p, cl.id, v.id)}
+                    title="Articola questa voce in sotto-voci numerate con un proprio subtotale, come 1) Terreni e fabbricati, 2) Impianti e macchinario">
+              + Sotto-voce
+            </button>
+          </div>
+
+          {(v.sottovoci || []).map(sv => {
+            const sotto = new Set((sv.conti || []).map(x => Number(x.c)));
+            const disp = contiOrdinati.filter(m => !codiciQui.has(Number(m.codice)));
+            const opz = forza ? disp : disp.filter(m => !assegnati[Number(m.codice)]);
+            return (
+              <div key={sv.id} style={{ marginLeft: 16, marginTop: 10, paddingLeft: 10,
+                                        borderLeft: "2px dashed var(--rule-2)" }}>
+                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  <input value={sv.codice || ""} onChange={e => api.updSottoVoce(p, cl.id, v.id, sv.id, { codice: e.target.value })}
+                         style={{ width: 42, textAlign: "center", fontSize: 12 }} placeholder="1" />
+                  <input value={sv.nome || ""} onChange={e => api.updSottoVoce(p, cl.id, v.id, sv.id, { nome: e.target.value })}
+                         style={{ flex: 1, minWidth: 150, fontSize: 12 }} />
+                  <button className="btn ghost sm" onClick={() => api.moveSottoVoce(p, cl.id, v.id, sv.id, -1)}>↑</button>
+                  <button className="btn ghost sm" onClick={() => api.moveSottoVoce(p, cl.id, v.id, sv.id, 1)}>↓</button>
+                  <button className="btn danger sm" onClick={() => api.delSottoVoce(p, cl.id, v.id, sv.id)}
+                          title="Elimina la sotto-voce: i suoi conti tornano agganciati alla voce, non vengono persi">✕</button>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "6px 0 0 4px" }}>
+                  {(sv.conti || []).map(x => (
+                    <SBPillConto key={x.c} x={x}
+                      nome={(contiMap[x.c]?.nome || "").trim() || `Conto ${x.c}`}
+                      saldo={saldiMap[x.c]}
+                      onSegno={() => api.updConto(p, cl.id, v.id, x.c, Number(x.s) < 0 ? 1 : -1)}
+                      onRimuovi={() => api.spostaContoInSottoVoce(p, cl.id, v.id, x.c, null)}
+                      titoloRimuovi="Riporta il conto al livello della voce" />
+                  ))}
+                  {sotto.size === 0 && (
+                    <span style={{ fontSize: 11, color: "var(--ink-3)" }}>Nessun conto: sposta qui i conti della voce col menu qui sotto.</span>
+                  )}
+                </div>
+                <div style={{ marginTop: 6, marginLeft: 4, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <select value="" onChange={e => { if (e.target.value) api.spostaContoInSottoVoce(p, cl.id, v.id, e.target.value, sv.id); e.target.value = ""; }}
+                          style={{ fontSize: 12, maxWidth: 340 }}>
+                    <option value="">↳ sposta qui un conto della voce…</option>
+                    {(v.conti || []).map(x => (
+                      <option key={x.c} value={x.c}>
+                        {String(x.c).padStart(2, "0")} · {(contiMap[x.c]?.nome || "").trim()} · {fmt(saldiMap[x.c])}
+                      </option>
+                    ))}
+                  </select>
+                  <select value="" onChange={e => { if (e.target.value) api.addContoInSottoVoce(p, cl.id, v.id, sv.id, e.target.value, 1); e.target.value = ""; }}
+                          style={{ fontSize: 12, maxWidth: 340 }}>
+                    <option value="">+ aggiungi conto qui…</option>
+                    {opz.map(m => (
+                      <option key={m.codice} value={m.codice}>
+                        {String(m.codice).padStart(2, "0")} · {(m.nome || "").trim()} · {fmt(m.saldo)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            );
+          })}
+        </>
+      )}
+    </div>
+  );
+}
+
+function SBEditorClasse({ p, cl, api, contiMap, contiOrdinati, assegnati }) {
+  return (
+    <div style={{ border: "1px solid var(--rule)", borderRadius: 8, marginBottom: 12, background: "var(--panel)" }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "10px 12px",
+                    background: "var(--panel-2)", borderBottom: "1px solid var(--rule)", flexWrap: "wrap" }}>
+        <input value={cl.codice || ""} onChange={e => api.updClasse(p, cl.id, { codice: e.target.value })}
+               style={{ width: 46, textAlign: "center", fontWeight: 700 }} placeholder="A" />
+        <input value={cl.nome || ""} onChange={e => api.updClasse(p, cl.id, { nome: e.target.value })}
+               style={{ flex: 1, minWidth: 160, fontWeight: 600 }} />
+        {p === "sp" ? (
+          <select value={cl.lato} onChange={e => api.updClasse(p, cl.id, { lato: e.target.value })} style={{ width: 118 }}>
+            <option value="attivo">Attivo</option>
+            <option value="passivo">Passivo/PN</option>
+          </select>
+        ) : (
+          <select value={cl.segno} onChange={e => api.updClasse(p, cl.id, { segno: Number(e.target.value) })} style={{ width: 132 }}>
+            <option value={1}>Positiva (+)</option>
+            <option value={-1}>Negativa (−)</option>
+          </select>
+        )}
+        <button className="btn ghost sm" onClick={() => api.moveClasse(p, cl.id, -1)} title="Sposta su">↑</button>
+        <button className="btn ghost sm" onClick={() => api.moveClasse(p, cl.id, 1)} title="Sposta giù">↓</button>
+        <button className="btn danger sm" onClick={() => api.delClasse(p, cl.id)} title="Elimina">✕</button>
+      </div>
+      <div style={{ padding: "8px 12px 12px" }}>
+        {(cl.voci || []).length === 0 && (
+          <div style={{ fontSize: 12, color: "var(--ink-3)", padding: "6px 0" }}>Nessuna voce.</div>
+        )}
+        {(cl.voci || []).map(v => (
+          v.tipo === "sottosezione" ? (
+            <SBEditorSottosezione key={v.id} p={p} cl={cl} v={v} api={api} />
+          ) : (
+            <SBEditorVoce key={v.id} p={p} cl={cl} v={v} api={api}
+                          contiMap={contiMap} contiOrdinati={contiOrdinati} assegnati={assegnati} />
+          )
+        ))}
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn ghost sm" onClick={() => api.addVoce(p, cl.id)}
+                  title="Aggiunge una riga di bilancio a questa macroclasse (I, II, D…): ha conti propri e un totale. Per articolarla, usa '+ Sotto-voce' dentro la voce stessa.">
+            + Voce
+          </button>
+          {/* "+ Sotto-sezione" rimosso dall'interfaccia: era un semplice sottotitolo
+              senza importo, e accanto a "+ Voce" e "+ Sotto-voce" confondeva e basta.
+              L'api addSottosezione e la resa restano, così le sotto-sezioni gia'
+              salvate nello schema continuano a funzionare. */}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Sottotitolo che raggruppa visivamente le voci successive (es. dentro Immobilizzazioni:
+// materiali / immateriali / finanziarie). Non ha conti propri, non entra nei totali:
+// e' solo un separatore che puoi rinominare e riordinare come una voce qualsiasi.
+function SBEditorSottosezione({ p, cl, v, api }) {
+  return (
+    <div style={{ display: "flex", gap: 6, alignItems: "center", margin: "12px 0 6px",
+                  paddingTop: 8, borderTop: "1px dashed var(--rule-2)" }}>
+      <span style={{ fontSize: 11, color: "var(--ink-3)" }}>§</span>
+      <input value={v.nome || ""} onChange={e => api.updVoce(p, cl.id, v.id, { nome: e.target.value })}
+             style={{ flex: 1, minWidth: 150, fontWeight: 700, fontSize: 12, textTransform: "uppercase",
+                      letterSpacing: 0.4, color: "var(--ink-2)", border: "none", borderBottom: "1px dashed var(--rule-2)",
+                      background: "transparent" }} />
+      <button className="btn ghost sm" onClick={() => api.moveVoce(p, cl.id, v.id, -1)}>↑</button>
+      <button className="btn ghost sm" onClick={() => api.moveVoce(p, cl.id, v.id, 1)}>↓</button>
+      <button className="btn danger sm" onClick={() => api.delVoce(p, cl.id, v.id)}>✕</button>
+    </div>
+  );
+}
+
+function SBEditorVoceArea({ area, v, api, categorieTutte, assegnateAltrove }) {
+  const disponibili = categorieTutte.filter(c => !assegnateAltrove.has(c));
+  return (
+    <div style={{ borderLeft: "2px solid var(--rule-2)", paddingLeft: 10, marginBottom: 10 }}>
+      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+        <input value={v.codice || ""} onChange={e => api.updVoceArea(area.id, v.id, { codice: e.target.value })}
+               style={{ width: 42, textAlign: "center" }} placeholder="1" />
+        <input value={v.nome || ""} onChange={e => api.updVoceArea(area.id, v.id, { nome: e.target.value })}
+               style={{ flex: 1, minWidth: 150 }} />
+        <button className="btn ghost sm" onClick={() => api.moveVoceArea(area.id, v.id, -1)}>↑</button>
+        <button className="btn ghost sm" onClick={() => api.moveVoceArea(area.id, v.id, 1)}>↓</button>
+        <button className="btn danger sm" onClick={() => api.delVoceArea(area.id, v.id)}>✕</button>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "6px 0 0 4px" }}>
+        {(v.categorie || []).map(c => (
+          <span key={c} style={{
+            display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12,
+            background: "var(--bg)", border: "1px solid var(--rule-2)", borderRadius: 20, padding: "3px 8px",
+          }}>
+            {c}
+            <button className="icon-btn" onClick={() => api.delCatVoce(area.id, v.id, c)}>✕</button>
+          </span>
+        ))}
+        {(v.categorie || []).length === 0 && (
+          <span style={{ fontSize: 12, color: "var(--ink-3)" }}>Nessuna categoria assegnata.</span>
+        )}
+      </div>
+      <div style={{ marginTop: 6, marginLeft: 4 }}>
+        <select value="" onChange={e => { api.addCatVoce(area.id, v.id, e.target.value); e.target.value = ""; }}
+                style={{ fontSize: 12, maxWidth: 340 }}>
+          <option value="">+ assegna categoria…</option>
+          {disponibili.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </div>
+    </div>
+  );
+}
+
+function SBEditorArea({ area, api, categorieTutte, assegnateAltrove }) {
+  return (
+    <div style={{ border: "1px solid var(--rule)", borderRadius: 8, marginBottom: 12, background: "var(--panel)" }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "10px 12px",
+                    background: "var(--panel-2)", borderBottom: "1px solid var(--rule)", flexWrap: "wrap" }}>
+        <input value={area.codice || ""} onChange={e => api.updArea(area.id, { codice: e.target.value })}
+               style={{ width: 46, textAlign: "center", fontWeight: 700 }} />
+        <input value={area.nome || ""} onChange={e => api.updArea(area.id, { nome: e.target.value })}
+               style={{ flex: 1, minWidth: 200, fontWeight: 600 }} />
+        <button className="btn ghost sm" onClick={() => api.moveArea(area.id, -1)}>↑</button>
+        <button className="btn ghost sm" onClick={() => api.moveArea(area.id, 1)}>↓</button>
+        <button className="btn danger sm" onClick={() => api.delArea(area.id)}>✕</button>
+      </div>
+      <div style={{ padding: "8px 12px 12px" }}>
+        {(area.voci || []).length === 0 && (
+          <div style={{ fontSize: 12, color: "var(--ink-3)", padding: "6px 0" }}>Nessuna sottovoce.</div>
+        )}
+        {(area.voci || []).map(v => (
+          <SBEditorVoceArea key={v.id} area={area} v={v} api={api}
+                             categorieTutte={categorieTutte} assegnateAltrove={assegnateAltrove} />
+        ))}
+        <button className="btn ghost sm" onClick={() => api.addVoceArea(area.id)}>+ Sottovoce</button>
+      </div>
+    </div>
+  );
+}
+
+// ---------- PAGINA ----------
+
+// Proposta per il rendiconto diretto: ogni categoria di cassa non ancora assegnata
+// va in una sottovoce in base alla sezione che ha nell'anagrafica Categorie
+// (entrata / uscita / investimento / interno). Le sottovoci si creano solo se servono.
+function proponiCategorieRF(schema, categorieTutte, categorie) {
+  const s = JSON.parse(JSON.stringify(schema));
+  s.rf = s.rf || schemaDefault().rf;
+  const aree = s.rf.aree || [];
+  const gia = new Set();
+  aree.forEach(a => (a.voci || []).forEach(v => (v.categorie || []).forEach(c => gia.add(c))));
+  const sezDi = {}; (categorie || []).forEach(c => { if (c) sezDi[nk(c.nome)] = c.sezione; });
+  let nuove = 0;
+  const voce = (a, nome) => {
+    if (!a) return null;
+    a.voci = a.voci || [];
+    let v = a.voci.find(x => x.nome === nome);
+    if (!v) { v = { id: uid(), codice: String(a.voci.length + 1), nome, categorie: [] }; a.voci.push(v); }
+    return v;
+  };
+  (categorieTutte || []).forEach(c => {
+    if (gia.has(c)) return;
+    const u = String(c).toUpperCase(), sez = sezDi[nk(c)];
+    let dest;
+    if (sez === "investimento" || /INVESTIMENT|TITOLI|FONDI|CESPIT|IMMOBILIZZ/.test(u)) dest = voce(aree[1], "Investimenti e disinvestimenti");
+    else if (/FINANZIAMENT|PRESTITO|MUTUO|CAPITALE/.test(u)) dest = voce(aree[2], "Prestiti e apporti");
+    else if (sez === "entrata") dest = voce(aree[0], "Incassi correnti");
+    else if (sez === "uscita") dest = voce(aree[0], "Pagamenti correnti");
+    else dest = voce(aree[0], "Altri flussi correnti");
+    if (dest) { dest.categorie = [...(dest.categorie || []), c].sort(); nuove++; }
+  });
+  if (nuove) {
+    // incassi prima dei pagamenti, poi rinumero 1..n come fa "↻ Rinumera sottovoci"
+    const rank = { "Incassi correnti": 1, "Pagamenti correnti": 2, "Altri flussi correnti": 3 };
+    aree.forEach(a => { a.voci = (a.voci || []).map((v, i) => ({ v, i })).sort((x, y) => ((rank[x.v.nome] || 0) - (rank[y.v.nome] || 0)) || (x.i - y.i)).map(x => x.v); });
+    rinumeraVociRF(s);
+  }
+  return s;
+}
+
+function PageSchemaBilancio({ scritture: scrittureTutte, conti, categorie, toast }) {
+  const onToast = (m, k) => toast && toast(m, k || "success");
+  const [tab, setTab] = useState("prospetti");   // sp | ce | rf | rfr | prospetti | controlli
+  // periodo: dall'apertura fino alla data scelta (tutte le scritture se vuoto)
+  const [alData, setAlData] = useState("");
+  const fineMesi = useMemo(() => {
+    const set = new Set();
+    (scrittureTutte || []).forEach(x => { if (x && x.data && !isApertura(x)) set.add(x.data.slice(0, 7)); });
+    return [...set].sort().reverse().map(mk => fineMese(mk));
+  }, [scrittureTutte]);
+  const scritture = useMemo(() => alData ? (scrittureTutte || []).filter(x => isApertura(x) || !x.data || x.data <= alData) : (scrittureTutte || []),
+    [scrittureTutte, alData]);
+  const ultimaData = useMemo(() => (scritture || []).reduce((m, x) => (x.data && x.data > m ? x.data : m), ""), [scritture]);
+  const stagione = "Situazione al " + fmtDate(alData || ultimaData || todayISO());
+  const [schema, setSchema] = useState(null);
+  const [esclusi, setEsclusi] = useState([]);
+  const [caricato, setCaricato] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [espansi, setEspansi] = useState({});
+
+  const statoRef = useRef({ schema: null, esclusi: [] });
+  const timerRef = useRef(null);
+  const pendingRef = useRef(false);
+  const scrittoRef = useRef(null);
+  statoRef.current = { schema, esclusi };
+  const fmt0Euro = (n) => "€ " + fmt(n, 0);
+
+  const contiMap = useMemo(() => {
+    const m = {};
+    (conti || []).forEach(c => { m[c.codice] = c; });
+    return m;
+  }, [conti]);
+
+  // mastrini dal libro giornale: tutti i conti del piano, anche a saldo zero,
+  // così si possono agganciare allo schema prima che vengano movimentati
+  const calcMastrini = (lista) => {
+    const m = {};
+    (conti || []).forEach(c => { m[c.codice] = { codice: Number(c.codice), nome: c.nome, dare: 0, avere: 0 }; });
+    (lista || []).forEach(sc => (sc.righe || []).forEach(r => {
+      if (!m[r.c]) m[r.c] = { codice: Number(r.c), nome: (contiMap[r.c] && contiMap[r.c].nome) || ("Conto " + r.c), dare: 0, avere: 0 };
+      m[r.c].dare += Number(r.d) || 0; m[r.c].avere += Number(r.a) || 0;
+    }));
+    return Object.values(m).map(x => ({ ...x, dare: r2(x.dare), avere: r2(x.avere), saldo: r2(x.dare - x.avere),
+      categoria: contiMap[x.codice]?.categoria || "", prospetto: contiMap[x.codice]?.prospetto || "" }))
+      .sort((a, b) => a.codice - b.codice);
+  };
+  const mastrini = useMemo(() => calcMastrini(scritture), [scritture, contiMap]);
+  // saldi di apertura: solo le scritture di (ri)apertura
+  const mastriniIniziali = useMemo(() => calcMastrini((scritture || []).filter(isApertura)), [scritture, contiMap]);
+
+  // categorie delle scritture che muovono la liquidità (per il rendiconto diretto)
+  const categorieTutte = useMemo(() => {
+    const s = new Set();
+    (scrittureTutte || []).forEach(x => {
+      if (isApertura(x)) return;
+      const liq = (x.righe || []).filter(r => (LIQ_CODES || []).includes(r.c));
+      if (!liq.length) return;
+      const v = liq.reduce((t, r) => t + (Number(r.d) || 0) - (Number(r.a) || 0), 0);
+      if (Math.abs(v) < 0.005) return;
+      s.add(catOf(x) || "(senza categoria)");
+    });
+    return [...s].sort();
+  }, [scrittureTutte]);
+
+  // --- caricamento ---
+  useEffect(() => {
+    if (!firebaseReady) {
+      try {
+        const raw = localStorage.getItem(SB_LS);
+        if (raw) { const parsed = JSON.parse(raw); setSchema(normalizzaSchema(parsed.schema || parsed)); setEsclusi(parsed.esclusi || []); }
+        else setSchema(proponiCategorieRF(proponiMappatura(schemaDefault(), conti), categorieTutte, categorie));
+      } catch (e) { setSchema(proponiCategorieRF(proponiMappatura(schemaDefault(), conti), categorieTutte, categorie)); }
+      setCaricato(true); return;
+    }
+    const ref = db.ref(SB_PATH);
+    const cb = ref.on("value", snap => {
+      const v = snap.val();
+      // non sovrascrivo mentre l'utente sta scrivendo, ne' sull'eco delle mie scritture
+      if (pendingRef.current) return;
+      if (v && v.json && v.json === scrittoRef.current) { setCaricato(true); return; }
+      if (v && v.json) {
+        try {
+          const parsed = JSON.parse(v.json);
+          setSchema(normalizzaSchema(parsed.schema || parsed));
+          setEsclusi(parsed.esclusi || []);
+        } catch (e) { setSchema(schemaDefault()); }
+      } else {
+        // primo accesso: schema di default con i conti già proposti
+        setSchema(proponiCategorieRF(proponiMappatura(schemaDefault(), conti), categorieTutte, categorie));
+      }
+      setCaricato(true);
+    }, () => { setSchema(proponiCategorieRF(proponiMappatura(schemaDefault(), conti), categorieTutte, categorie)); setCaricato(true); });
+    return () => { ref.off("value", cb); clearTimeout(timerRef.current); };
+  }, []);
+
+  const scriviOra = useCallback(async () => {
+    clearTimeout(timerRef.current);
+    const { schema: sc, esclusi: es } = statoRef.current;
+    if (!sc) { pendingRef.current = false; return; }
+    const json = JSON.stringify({ schema: sc, esclusi: es });
+    setSalvando(true);
+    try {
+      scrittoRef.current = json;
+      if (firebaseReady) await db.ref(SB_PATH).set({ json, aggiornatoIl: new Date().toISOString() });
+      else localStorage.setItem(SB_LS, json);
+    } catch (e) {
+      onToast && onToast("Errore nel salvataggio dello schema", "error");
+    }
+    pendingRef.current = false;
+    setSalvando(false);
+  }, []);
+
+  // aggiorna lo stato locale subito (l'input resta reattivo) e salva in differita
+  const aggiorna = useCallback((sc, es) => {
+    setSchema(sc);
+    if (es !== undefined) setEsclusi(es);
+    statoRef.current = { schema: sc, esclusi: es !== undefined ? es : statoRef.current.esclusi };
+    pendingRef.current = true;
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => scriviOra(), 800);
+  }, [scriviOra]);
+
+  const prospetti = useMemo(() => schema ? calcolaProspetti(schema, mastrini) : null, [schema, mastrini]);
+  const controlli = useMemo(() => schema ? controlliSchema(schema, mastrini, esclusi) : null, [schema, mastrini, esclusi]);
+
+  // Avvisi di classificazione: non bloccano nulla, segnalano voci che quadrano
+  // ma raccontano male i numeri. Lo schema e' salvato su Firebase, quindi una
+  // riclassifica va fatta qui a mano: questi avvisi dicono dove guardare.
+  const avvisiClassificazione = useMemo(() => {
+    if (!schema) return [];
+    const out = [];
+    const nomeDi = (c) => (contiMap?.[Number(c)]?.nome || `Conto ${c}`).trim();
+    // 1) Conto economico: cosa sta dentro la voce delle imposte
+    (schema.ce || []).forEach(cl => {
+      if (!/impost/i.test(cl.nome || "")) return;
+      (cl.voci || []).forEach(v => [
+        ...(v.conti || []).map(x => ({ x, dove: v.nome })),
+        ...(v.sottovoci || []).flatMap(sv => (sv.conti || []).map(x => ({ x, dove: `${v.nome} · ${sv.nome}` }))),
+      ].forEach(({ x }) => {
+        const n = nomeDi(x.c).toUpperCase();
+        if (/RITENUT/.test(n)) {
+          out.push({ grave: true, testo: `${x.c} ${nomeDi(x.c)} è classificato in "${cl.nome} · ${v.nome}". Le ritenute trattenute sui compensi pagati a terzi fanno parte del costo del servizio, non delle imposte.` });
+        } else if (!/IMPOST/.test(n)) {
+          out.push({ grave: false, testo: `${x.c} ${nomeDi(x.c)} è nella voce delle imposte ma il nome non parla di imposte: verifica la classificazione.` });
+        }
+      }));
+    });
+    // 2) Rendiconto: sottovoci senza numero, senza categorie, o col nome segnaposto
+    (schema.rf?.aree || []).forEach(a => {
+      const voci = a.voci || [];
+      const conNumero = voci.filter(v => String(v.codice || "").trim() !== "").length;
+      voci.forEach(v => {
+        if (conNumero > 0 && String(v.codice || "").trim() === "") {
+          out.push({ grave: false, testo: `Rendiconto, area ${a.codice || a.nome}: la sottovoce "${v.nome}" è senza numero mentre le altre ce l'hanno. Usa "↻ Rinumera sottovoci".` });
+        }
+        if (/^categorie$/i.test((v.nome || "").trim())) {
+          out.push({ grave: true, testo: `Rendiconto, area ${a.codice || a.nome}: "${v.nome}" è un nome segnaposto ereditato dalla vecchia migrazione. Rinominala con il flusso che contiene (es. "Mezzi propri - Dividendi").` });
+        }
+        if (!(v.categorie || []).length) {
+          out.push({ tipo: "nota", testo: `Area ${a.codice || a.nome}: "${v.nome}" non ha categorie assegnate, quindi esce a zero nel PDF.` });
+        }
+        // 3) Categoria di cassa finita sotto una sottovoce che non la descrive
+        (v.categorie || []).forEach(c => {
+          REGOLE_CAT_RF.forEach(r => {
+            if (r.cat.test(String(c).toUpperCase()) && !r.voce.test(v.nome || "")) {
+              out.push({ grave: true, testo: `Rendiconto, area ${a.codice || a.nome}: la categoria "${c}" è assegnata a "${v.nome}". Attesa ${r.attesa}.`
+                + (r.auto ? "" : " Da spostare a mano: la correzione automatica lascia stare questo caso.") });
+            }
+          });
+        });
+      });
+    });
+    return out.map(a => ({ tipo: "azione", ...a }));
+  }, [schema, contiMap]);
+
+  // Le note informative (sottovoci strutturalmente vuote) non sono errori:
+  // le tengo separate dagli avvisi, altrimenti il banner resta acceso per
+  // sempre su cose che non vanno toccate e si smette di leggerlo.
+  const avvisiAzione = useMemo(() => avvisiClassificazione.filter(a => a.tipo === "azione"), [avvisiClassificazione]);
+  const avvisiNota   = useMemo(() => avvisiClassificazione.filter(a => a.tipo === "nota"), [avvisiClassificazione]);
+
+  // Dry run della correzione automatica: la UI sa in anticipo quante e quali
+  // correzioni verrebbero applicate, così il pulsante compare solo se serve.
+  const correzioniSchema = useMemo(() => calcolaCorrezioniSchema(schema, contiMap), [schema, contiMap]);
+
+  const rfDir = useMemo(() => schema ? rendicontoDiretto(schema, scritture) : null, [schema, scritture]);
+  const rfRicl = useMemo(() => (schema && prospetti) ? rendicontoRiclassificato(schema, prospetti, mastrini, mastriniIniziali, contiMap) : null,
+    [schema, prospetti, mastrini, mastriniIniziali, contiMap]);
+  const rfInd = useMemo(() => schema ? rendicontoIndiretto(schema, mastrini, mastriniIniziali, contiMap) : null,
+    [schema, mastrini, mastriniIniziali, contiMap]);
+
+  if (!caricato || !schema) return <div className="empty-state">Caricamento schema…</div>;
+
+  // ---------- mutatori ----------
+  const clone = () => JSON.parse(JSON.stringify(statoRef.current.schema));
+  const api = {
+    updClasse: (p, id, patch) => { const s = clone(); const cl = s[p].find(c => c.id === id); if (cl) { Object.assign(cl, patch); aggiorna(s); } },
+    delClasse: (p, id) => {
+      const s0 = statoRef.current.schema;
+      const cl = s0[p].find(c => c.id === id);
+      const n = (cl?.voci || []).reduce((a, v) => a + (v.conti || []).length +
+        (v.sottovoci || []).reduce((b, sv) => b + (sv.conti || []).length, 0), 0);
+      if (!confirm(`Eliminare la macroclasse "${cl?.nome}"?${n ? ` ${n} conti torneranno non assegnati.` : ""}`)) return;
+      const s = clone(); s[p] = s[p].filter(c => c.id !== id); aggiorna(s);
+    },
+    moveClasse: (p, id, dir) => {
+      const s = clone(); const i = s[p].findIndex(c => c.id === id); const j = i + dir;
+      if (i < 0 || j < 0 || j >= s[p].length) return;
+      [s[p][i], s[p][j]] = [s[p][j], s[p][i]]; aggiorna(s);
+    },
+    addVoce: (p, clId) => { const s = clone(); const cl = s[p].find(c => c.id === clId); if (!cl) return;
+      cl.voci = cl.voci || []; cl.voci.push({ id: uid(), codice: "", nome: "Nuova voce", conti: [] }); aggiorna(s); },
+    addSottosezione: (p, clId) => { const s = clone(); const cl = s[p].find(c => c.id === clId); if (!cl) return;
+      cl.voci = cl.voci || []; cl.voci.push({ id: uid(), tipo: "sottosezione", nome: "Nuova sotto-sezione" }); aggiorna(s); },
+    updVoce: (p, clId, vId, patch) => { const s = clone(); const cl = s[p].find(c => c.id === clId); if (!cl) return;
+      const v = (cl.voci || []).find(x => x.id === vId); if (!v) return; Object.assign(v, patch); aggiorna(s); },
+    delVoce: (p, clId, vId) => { const s = clone(); const cl = s[p].find(c => c.id === clId); if (!cl) return;
+      cl.voci = (cl.voci || []).filter(x => x.id !== vId); aggiorna(s); },
+    moveVoce: (p, clId, vId, dir) => { const s = clone(); const cl = s[p].find(c => c.id === clId); if (!cl) return;
+      const i = cl.voci.findIndex(x => x.id === vId); const j = i + dir;
+      if (i < 0 || j < 0 || j >= cl.voci.length) return;
+      [cl.voci[i], cl.voci[j]] = [cl.voci[j], cl.voci[i]]; aggiorna(s); },
+    // --- sotto-voci: il terzo livello dentro una voce (art. 2424) ---
+    // Un contenitore con nome, numero e conti propri, che espone il suo subtotale
+    // e confluisce nel totale della voce che lo contiene.
+    addSottoVoce: (p, clId, vId) => { const s = clone(); const cl = s[p].find(c => c.id === clId); if (!cl) return;
+      const v = (cl.voci || []).find(x => x.id === vId); if (!v) return;
+      v.sottovoci = v.sottovoci || [];
+      v.sottovoci.push({ id: uid(), codice: String(v.sottovoci.length + 1), nome: "Nuova sotto-voce", conti: [] });
+      aggiorna(s); },
+    updSottoVoce: (p, clId, vId, svId, patch) => { const s = clone(); const cl = s[p].find(c => c.id === clId); if (!cl) return;
+      const v = (cl.voci || []).find(x => x.id === vId); if (!v) return;
+      const sv = (v.sottovoci || []).find(x => x.id === svId); if (!sv) return;
+      Object.assign(sv, patch); aggiorna(s); },
+    delSottoVoce: (p, clId, vId, svId) => { const s = clone(); const cl = s[p].find(c => c.id === clId); if (!cl) return;
+      const v = (cl.voci || []).find(x => x.id === vId); if (!v) return;
+      const sv = (v.sottovoci || []).find(x => x.id === svId);
+      // i conti della sotto-voce non vanno persi: tornano agganciati alla voce
+      if (sv && (sv.conti || []).length) {
+        v.conti = v.conti || [];
+        sv.conti.forEach(x => { if (!v.conti.some(y => Number(y.c) === Number(x.c))) v.conti.push(x); });
+      }
+      v.sottovoci = (v.sottovoci || []).filter(x => x.id !== svId); aggiorna(s); },
+    moveSottoVoce: (p, clId, vId, svId, dir) => { const s = clone(); const cl = s[p].find(c => c.id === clId); if (!cl) return;
+      const v = (cl.voci || []).find(x => x.id === vId); if (!v) return;
+      const i = (v.sottovoci || []).findIndex(x => x.id === svId); const j = i + dir;
+      if (i < 0 || j < 0 || j >= v.sottovoci.length) return;
+      [v.sottovoci[i], v.sottovoci[j]] = [v.sottovoci[j], v.sottovoci[i]]; aggiorna(s); },
+    // Sposta un conto gia' agganciato alla voce dentro una sua sotto-voce
+    // (svId null = riporta il conto al livello della voce).
+    spostaContoInSottoVoce: (p, clId, vId, codice, svId) => {
+      const s = clone(); const cl = s[p].find(c => c.id === clId); if (!cl) return;
+      const v = (cl.voci || []).find(x => x.id === vId); if (!v) return;
+      const cod = Number(codice);
+      let riga = (v.conti || []).find(x => Number(x.c) === cod);
+      (v.sottovoci || []).forEach(sv => { const t = (sv.conti || []).find(x => Number(x.c) === cod); if (t) riga = t; });
+      if (!riga) return;
+      v.conti = (v.conti || []).filter(x => Number(x.c) !== cod);
+      (v.sottovoci || []).forEach(sv => { sv.conti = (sv.conti || []).filter(x => Number(x.c) !== cod); });
+      if (svId) {
+        const sv = (v.sottovoci || []).find(x => x.id === svId); if (!sv) return;
+        sv.conti = sv.conti || []; sv.conti.push(riga);
+      } else { v.conti = v.conti || []; v.conti.push(riga); }
+      aggiorna(s); },
+    // Aggancia un conto nuovo direttamente dentro una sotto-voce, in una sola
+    // scrittura (invece di aggiungerlo alla voce e poi spostarlo).
+    addContoInSottoVoce: (p, clId, vId, svId, codice, segno) => { if (!codice) return;
+      const s = clone(); const cl = s[p].find(c => c.id === clId); if (!cl) return;
+      const v = (cl.voci || []).find(x => x.id === vId); if (!v) return;
+      const sv = (v.sottovoci || []).find(x => x.id === svId); if (!sv) return;
+      const cod = Number(codice);
+      const gia = (v.conti || []).some(x => Number(x.c) === cod) ||
+                  (v.sottovoci || []).some(q => (q.conti || []).some(x => Number(x.c) === cod));
+      if (gia) return;
+      sv.conti = sv.conti || [];
+      sv.conti.push({ c: cod, s: Number(segno) || 1 }); aggiorna(s); },
+    addConto: (p, clId, vId, codice, segno) => { if (!codice) return;
+      const s = clone(); const cl = s[p].find(c => c.id === clId); if (!cl) return;
+      const v = (cl.voci || []).find(x => x.id === vId); if (!v) return;
+      v.conti = v.conti || [];
+      if (v.conti.some(x => Number(x.c) === Number(codice))) return;
+      v.conti.push({ c: Number(codice), s: Number(segno) || 1 }); aggiorna(s); },
+    // updConto/delConto agiscono sul conto ovunque si trovi dentro la voce:
+    // agganciato direttamente o dentro una delle sue sotto-voci.
+    updConto: (p, clId, vId, codice, segno) => { const s = clone(); const cl = s[p].find(c => c.id === clId); if (!cl) return;
+      const v = (cl.voci || []).find(x => x.id === vId); if (!v) return;
+      const liste = [v.conti || [], ...(v.sottovoci || []).map(sv => sv.conti || [])];
+      const x = liste.flat().find(y => Number(y.c) === Number(codice)); if (!x) return;
+      x.s = Number(segno); aggiorna(s); },
+    delConto: (p, clId, vId, codice) => { const s = clone(); const cl = s[p].find(c => c.id === clId); if (!cl) return;
+      const v = (cl.voci || []).find(x => x.id === vId); if (!v) return;
+      v.conti = (v.conti || []).filter(y => Number(y.c) !== Number(codice));
+      (v.sottovoci || []).forEach(sv => { sv.conti = (sv.conti || []).filter(y => Number(y.c) !== Number(codice)); });
+      aggiorna(s); },
+    updArea: (id, patch) => { const s = clone(); const a = s.rf.aree.find(x => x.id === id); if (a) { Object.assign(a, patch); aggiorna(s); } },
+    delArea: (id) => { if (!confirm("Eliminare l'area?")) return;
+      const s = clone(); s.rf.aree = s.rf.aree.filter(x => x.id !== id); aggiorna(s); },
+    moveArea: (id, dir) => { const s = clone(); const i = s.rf.aree.findIndex(x => x.id === id); const j = i + dir;
+      if (i < 0 || j < 0 || j >= s.rf.aree.length) return;
+      [s.rf.aree[i], s.rf.aree[j]] = [s.rf.aree[j], s.rf.aree[i]]; aggiorna(s); },
+    addVoceArea: (areaId) => { const s = clone(); const a = s.rf.aree.find(x => x.id === areaId); if (!a) return;
+      a.voci = a.voci || []; a.voci.push({ id: uid(), codice: "", nome: "Nuova sottovoce", categorie: [] }); aggiorna(s); },
+    updVoceArea: (areaId, voceId, patch) => { const s = clone(); const a = s.rf.aree.find(x => x.id === areaId); if (!a) return;
+      const v = (a.voci || []).find(x => x.id === voceId); if (!v) return; Object.assign(v, patch); aggiorna(s); },
+    delVoceArea: (areaId, voceId) => { const s = clone(); const a = s.rf.aree.find(x => x.id === areaId); if (!a) return;
+      a.voci = (a.voci || []).filter(x => x.id !== voceId); aggiorna(s); },
+    moveVoceArea: (areaId, voceId, dir) => { const s = clone(); const a = s.rf.aree.find(x => x.id === areaId); if (!a) return;
+      const i = a.voci.findIndex(x => x.id === voceId); const j = i + dir;
+      if (i < 0 || j < 0 || j >= a.voci.length) return;
+      [a.voci[i], a.voci[j]] = [a.voci[j], a.voci[i]]; aggiorna(s); },
+    addCatVoce: (areaId, voceId, cat) => { if (!cat) return; const s = clone();
+      // assegnazione singola: la categoria viene tolta da qualunque altra sottovoce prima di aggiungerla qui
+      s.rf.aree.forEach(a => (a.voci || []).forEach(v => { v.categorie = (v.categorie || []).filter(c => c !== cat); }));
+      const a = s.rf.aree.find(x => x.id === areaId); if (!a) return;
+      const v = (a.voci || []).find(x => x.id === voceId); if (!v) return;
+      v.categorie = [...(v.categorie || []), cat].sort(); aggiorna(s); },
+    delCatVoce: (areaId, voceId, cat) => { const s = clone(); const a = s.rf.aree.find(x => x.id === areaId); if (!a) return;
+      const v = (a.voci || []).find(x => x.id === voceId); if (!v) return;
+      v.categorie = (v.categorie || []).filter(c => c !== cat); aggiorna(s); },
+    setNatura: (cod, n) => { const s = clone(); s.rf.natura = s.rf.natura || {}; s.rf.natura[String(cod)] = n; aggiorna(s); },
+  };
+
+  const contiOrdinati = [...mastrini].sort((a, b) => a.codice - b.codice);
+  const assegnateAltrove = new Set();
+  (schema.rf?.aree || []).forEach(a => (a.voci || []).forEach(v => (v.categorie || []).forEach(c => assegnateAltrove.add(c))));
+
+  const resetSchema = () => {
+    if (!confirm("Ripristinare lo schema di default? Tutte le assegnazioni verranno perse.")) return;
+    aggiorna(schemaDefault(), []);
+    onToast && onToast("Schema reimpostato");
+  };
+  const autoMappa = () => {
+    const s = proponiCategorieRF(proponiMappatura(statoRef.current.schema, conti), categorieTutte, categorie);
+    aggiorna(s);
+    onToast && onToast("Mappatura proposta per i conti e le categorie non ancora assegnati");
+  };
+  const caricaVociConsigliateRF = () => {
+    const s = clone();
+    const struttura = [
+      { codice: "A", voci: ["Incassi da lavoro", "Incassi da famiglia e parenti", "Rimborsi ricevuti", "Incassi diversi",
+                             "Spese per lavoro e studio", "Carburante e trasporti", "Commissioni e spese bancarie",
+                             "Spese diverse", "Imposte pagate", "Altri pagamenti"] },
+      { codice: "B", voci: ["Beni durevoli - Acquisti", "Beni durevoli - Vendite",
+                             "Investimenti finanziari - Versamenti", "Investimenti finanziari - Disinvestimenti"] },
+      { codice: "C", voci: ["Prestiti ricevuti", "Prestiti rimborsati", "Apporti e prelievi personali"] },
+    ];
+    s.rf.aree = s.rf.aree || [];
+    struttura.forEach((def, i) => {
+      let area = s.rf.aree.find(a => a.codice === def.codice) || s.rf.aree[i];
+      if (!area) { area = { id: uid(), codice: def.codice, nome: "", voci: [] }; s.rf.aree.push(area); }
+      area.voci = area.voci || [];
+      def.voci.forEach(nome => {
+        if (!area.voci.some(v => v.nome === nome)) area.voci.push({ id: uid(), codice: "", nome, categorie: [] });
+      });
+    });
+    rinumeraVociRF(s);
+    aggiorna(s);
+    onToast && onToast("Sottovoci consigliate aggiunte e rinumerate: assegna ora le categorie a ciascuna");
+  };
+  const rinumeraVociRFAzione = () => {
+    const s = rinumeraVociRF(clone());
+    aggiorna(s);
+    onToast && onToast("Sottovoci del rendiconto rinumerate 1..n per ogni area");
+  };
+
+  // ---------- Correzione automatica degli avvisi di classificazione ----------
+  // Sposta le voci nella casella che le descrive. Nessun importo viene toccato:
+  // conti e categorie restano gli stessi, cambia solo dove vengono esposti,
+  // quindi totali, risultato e quadrature non si muovono. Una sola scrittura
+  // dello schema su Firebase, poi l'app si riallinea da sola.
+  const correggiSchemaAutomaticamente = () => {
+    const { schema: corretto, azioni } = correzioniSchema;
+    if (!azioni.length) {
+      onToast && onToast("Niente da correggere: la classificazione è già coerente");
+      return;
+    }
+    if (!confirm(`Applicare ${azioni.length} correzion${azioni.length === 1 ? "e" : "i"} allo schema?\n\n${azioni.join("\n")}\n\nNessun importo viene modificato: cambia solo la voce in cui ciascun saldo viene esposto. Risultato d'esercizio, totali e quadrature restano identici.`)) return;
+    aggiorna(corretto);
+    onToast && onToast(`${azioni.length} correzion${azioni.length === 1 ? "e applicata" : "i applicate"} allo schema`);
+  };
+  const escludiConto = (cod) => aggiorna(statoRef.current.schema, [...new Set([...esclusi, Number(cod)])]);
+  const reincludiConto = (cod) => aggiorna(statoRef.current.schema, esclusi.filter(x => Number(x) !== Number(cod)));
+
+  // ---------- export PDF (stessa grafica della pagina Export) ----------
+  const esportaPDF = () => generaPdfProspettiSchema(prospetti, rfDir, rfInd, stagione);
+
+  // ---------- render dei prospetti ----------
+  const rigaConto = (d, indent) => (
+    <tr key={d.c} style={{ fontSize: 12, color: "var(--ink-2)" }}>
+      <td style={{ paddingLeft: indent }}>
+        <span className="mono">{String(d.c).padStart(2, "0")}</span> {d.nome}
+        {d.valore < 0 && <span style={{ color: "var(--danger)" }}> (in rettifica)</span>}
+      </td>
+      <td className="num">{fmtP(d.valore)}</td>
+    </tr>
+  );
+  const rigaVoce = (v) => {
+    const sv = v.sottovoci || [];
+    const apribile = v.dettaglio.length > 0 || sv.length > 0;
+    return (
+      <React.Fragment key={v.id}>
+        <tr>
+          <td style={{ paddingLeft: 26, cursor: apribile ? "pointer" : "default" }}
+              onClick={() => apribile && setEspansi(p => ({ ...p, [v.id]: !p[v.id] }))}>
+            {apribile && <span style={{ color: "var(--ink-3)", marginRight: 6 }}>{espansi[v.id] ? "▾" : "▸"}</span>}
+            {v.codice ? v.codice + ". " : ""}{v.nome}
+            {v.speciale === "risultato" && <span style={{ color: "var(--ink-3)", fontSize: 11 }}> (da CE)</span>}
+          </td>
+          <td className="num">{fmtP(v.valore, 0)}</td>
+        </tr>
+        {/* le sotto-voci restano sempre visibili col loro subtotale: sono parte
+            del prospetto, non un dettaglio da aprire. I conti sotto, invece, si
+            mostrano solo quando la voce e' espansa. */}
+        {sv.map(x => (
+          <React.Fragment key={x.id}>
+            <tr style={{ fontSize: 12.5 }}>
+              <td style={{ paddingLeft: 44, color: "var(--ink-2)" }}>
+                {x.codice ? x.codice + ") " : ""}{x.nome}
+              </td>
+              <td className="num" style={{ color: "var(--ink-2)" }}>{fmtP(x.valore, 0)}</td>
+            </tr>
+            {espansi[v.id] && (x.dettaglio || []).map(d => rigaConto(d, 68))}
+          </React.Fragment>
+        ))}
+        {espansi[v.id] && v.dettaglio.map(d => rigaConto(d, 52))}
+      </React.Fragment>
+    );
+  };
+  // le "sotto-sezioni" sono voci marcatore (v.tipo === "sottosezione"): compaiono come
+  // sottotitolo nell'elenco, senza importo, e non entrano nei totali (calcolaProspetti
+  // restituisce loro valore 0 / dettaglio vuoto).
+  const righeVociConSottosezioni = (voci) => (voci || []).map(v => (
+    v.tipo === "sottosezione" ? (
+      <tr key={v.id}>
+        <td colSpan={2} style={{ paddingLeft: 20, fontSize: 11, fontWeight: 700, color: "var(--ink-3)",
+                                  textTransform: "uppercase", letterSpacing: 0.4, paddingTop: 10 }}>
+          {v.nome}
+        </td>
+      </tr>
+    ) : rigaVoce(v)
+  ));
+
+  const diffRF = Math.round((rfInd.variazione - rfDir.variazione) * 100) / 100;
+
+  return (
+    <div className="sb-page">
+      <div className="page-head">
+        <div>
+          <h2>Schema di Bilancio</h2>
+          <div className="sub">
+            Composizione dei prospetti civilistici · {stagione}
+            {salvando && <span style={{ color: "var(--ink-3)" }}> · salvataggio…</span>}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <select className="sb-periodo" value={alData} onChange={e => setAlData(e.target.value)} title="Periodo: dall'apertura fino a questa data">
+            <option value="">Situazione attuale (tutte le scritture)</option>
+            {fineMesi.map(d => <option key={d} value={d}>Al {fmtDate(d)}</option>)}
+          </select>
+          <button className="btn ghost" onClick={autoMappa}>Proponi mappatura</button>
+          <button className="btn ghost" onClick={resetSchema}>Ripristina default</button>
+          <button className="btn accent" onClick={esportaPDF}>↧ PDF prospetti</button>
+        </div>
+      </div>
+
+      <div className="kpi-grid" style={{ marginBottom: 16 }}>
+        <div className="kpi">
+          <div className="label">Totale Attivo</div>
+          <div className="value">{fmt0Euro(prospetti.totAttivo)}</div>
+        </div>
+        <div className="kpi">
+          <div className="label">Totale Passivo e PN</div>
+          <div className="value">{fmt0Euro(prospetti.totPassivo)}</div>
+        </div>
+        <div className="kpi">
+          <div className="label">Risultato d'esercizio</div>
+          <div className="value" style={{ color: prospetti.risultato >= 0 ? "var(--accent)" : "var(--danger)" }}>
+            {fmt0Euro(prospetti.risultato)}
+          </div>
+        </div>
+        <div className="kpi">
+          <div className="label">Quadratura</div>
+          <div className="value" style={{ color: Math.abs(prospetti.sbilancio) < 0.01 ? "var(--accent)" : "var(--danger)" }}>
+            {Math.abs(prospetti.sbilancio) < 0.01 ? "OK" : fmt0Euro(prospetti.sbilancio)}
+          </div>
+          <div className="hint">
+            {controlli.mancanti.length > 0 && `${controlli.mancanti.length} conti non assegnati`}
+            {controlli.mancanti.length > 0 && controlli.doppi.length > 0 && " · "}
+            {controlli.doppi.length > 0 && `${controlli.doppi.length} doppi`}
+            {controlli.mancanti.length === 0 && controlli.doppi.length === 0 && "Tutti i conti mappati"}
+          </div>
+        </div>
+      </div>
+
+      <div className="sb-tabs">
+        {[["prospetti", "Anteprima prospetti"], ["sp", "Struttura SP"], ["ce", "Struttura CE"], ["rf", "Struttura RF"], ["rfr", "RF Riclassificato"],
+          ["controlli", `Controlli${controlli.mancanti.length + controlli.doppi.length > 0 ? " ⚠" : ""}`]]
+          .map(([k, label]) => (
+            <button key={k} className={"btn " + (tab === k ? "" : "ghost")} onClick={() => setTab(k)}>{label}</button>
+          ))}
+      </div>
+
+      {avvisiAzione.length > 0 && ["sp", "ce", "rf", "prospetti"].includes(tab) && (
+        <div style={{ padding: "12px 16px", marginBottom: 16, borderRadius: 8,
+                      background: "#fff8e7", border: "1px solid #f0d860", color: "#7a5d00", fontSize: 13 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 260 }}>
+              <strong>Da sistemare ({avvisiAzione.length}).</strong>
+              <div style={{ fontSize: 12, marginTop: 4 }}>
+                Il bilancio quadra lo stesso: sono voci messe in una casella che non le descrive.
+              </div>
+            </div>
+            {correzioniSchema.azioni.length > 0 && (
+              <button className="btn accent" onClick={correggiSchemaAutomaticamente}
+                      title={correzioniSchema.azioni.join("\n")}>
+                🔧 Correggi automaticamente ({correzioniSchema.azioni.length})
+              </button>
+            )}
+          </div>
+          <ul style={{ margin: "8px 0 0", paddingLeft: 18, lineHeight: 1.5 }}>
+            {avvisiAzione.map((a, i) => (
+              <li key={i} style={{ fontWeight: a.grave ? 600 : 400, marginBottom: 3 }}>{a.testo}</li>
+            ))}
+          </ul>
+          {correzioniSchema.azioni.length < avvisiAzione.length && (
+            <div style={{ fontSize: 11.5, marginTop: 8, opacity: 0.85 }}>
+              Il pulsante ne sistema {correzioniSchema.azioni.length}: il resto richiede una scelta tua.
+            </div>
+          )}
+        </div>
+      )}
+
+      {avvisiAzione.length === 0 && avvisiNota.length > 0 && ["sp", "ce", "rf", "prospetti"].includes(tab) && (
+        <details style={{ marginBottom: 16, fontSize: 12.5, color: "var(--ink-2)",
+                          background: "var(--accent-soft)", border: "1px solid #c8d8ce", borderRadius: 8, padding: "10px 14px" }}>
+          <summary style={{ cursor: "pointer", color: "var(--accent-ink)", fontWeight: 600 }}>
+            ✓ Classificazione coerente · {avvisiNota.length} sottovoci vuote per scelta
+          </summary>
+          <div style={{ fontSize: 12, margin: "8px 0 6px" }}>
+            Sono la struttura civilistica del rendiconto: restano a zero finché non c'è un movimento di quel tipo.
+            Nessuna azione richiesta. Se sai di non usarle mai, puoi eliminarle qui sotto.
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.5 }}>
+            {avvisiNota.map((a, i) => <li key={i} style={{ marginBottom: 2 }}>{a.testo}</li>)}
+          </ul>
+        </details>
+      )}
+
+      {(tab === "sp" || tab === "ce") && (
+        <div>
+          <div style={{ fontSize: 12.5, color: "var(--ink-2)", marginBottom: 12, lineHeight: 1.55 }}>
+            Ogni voce raccoglie uno o più conti. Il pulsante <b>+ / −</b> su ciascun conto decide se il saldo
+            entra col <b>segno naturale</b> o <b>invertito</b>: i fondi ammortamento vanno agganciati alla stessa
+            voce del cespite col segno naturale, perché avendo saldo avere si deducono da soli e la voce espone il netto.
+            Un conto già assegnato altrove non compare più nell'elenco "+ aggiungi conto…": per inserirlo comunque
+            una seconda volta spunta <b>Forza doppio</b> accanto al menu della voce.
+          </div>
+          {schema[tab].map(cl => (
+            <SBEditorClasse key={cl.id} p={tab} cl={cl} api={api}
+                            contiMap={contiMap} contiOrdinati={contiOrdinati} assegnati={controlli.assegnati} />
+          ))}
+          <button className="btn" onClick={() => {
+            const s = clone();
+            s[tab].push(tab === "sp"
+              ? { id: uid(), codice: "", nome: "Nuova macroclasse", lato: "attivo", voci: [] }
+              : { id: uid(), codice: "", nome: "Nuova macroclasse", segno: 1, voci: [] });
+            aggiorna(s);
+          }}>+ Macroclasse</button>
+        </div>
+      )}
+
+      {tab === "rf" && (
+        <div>
+          <div style={{ fontSize: 12.5, color: "var(--ink-2)", marginBottom: 12, lineHeight: 1.55 }}>
+            Il <b>metodo diretto</b> classifica i flussi di cassa per categoria di movimento: ogni area può
+            avere più <b>sottovoci</b> (come le macroclassi di SP/CE), e ogni sottovoce raccoglie una o più
+            categorie di movimento — così eviti di riversare tutte le categorie in blocco sotto le 3 aree
+            principali. Il <b>metodo indiretto</b> parte dal risultato e usa le variazioni dei saldi
+            patrimoniali, per cui ha bisogno di sapere la <b>natura</b> di ciascun conto. Le due strade
+            arrivano alla stessa variazione di liquidità: se non coincidono per area, una categoria è
+            classificata male.
+          </div>
+
+          {(schema.rf?.aree || []).map(a => (
+            <SBEditorArea key={a.id} area={a} api={api}
+                          categorieTutte={categorieTutte} assegnateAltrove={assegnateAltrove} />
+          ))}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button className="btn" onClick={() => {
+              const s = clone(); s.rf.aree.push({ id: uid(), codice: "", nome: "Nuova area", voci: [] }); aggiorna(s);
+            }}>+ Area</button>
+            <button className="btn ghost" onClick={caricaVociConsigliateRF} title="Aggiunge alle 3 aree le sottovoci tipiche di una contabilità personale, senza toccare quelle già presenti">
+              + Carica sottovoci consigliate
+            </button>
+            <button className="btn ghost" onClick={rinumeraVociRFAzione} title="Assegna i numeri 1..n alle sottovoci di ogni area, nell'ordine in cui sono elencate: nessuna voce resta senza numero nel PDF">
+              ↻ Rinumera sottovoci
+            </button>
+          </div>
+
+          {rfDir.nonAssegnate.length > 0 && (
+            <div className="card" style={{ marginTop: 16, borderLeft: "3px solid var(--danger)" }}>
+              <div className="card-title">Categorie non assegnate ({rfDir.nonAssegnate.length})</div>
+              <div style={{ fontSize: 12, color: "var(--ink-2)", margin: "8px 0" }}>
+                Confluiscono per default nella prima area. Assegnale esplicitamente per un rendiconto corretto.
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {rfDir.nonAssegnate.map(c => (
+                  <span key={c} style={{ fontSize: 12, background: "#fbecec", border: "1px solid var(--rule-2)",
+                                         borderRadius: 20, padding: "3px 8px" }}>{c}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {Math.abs(rfDir.differenzaNascosta) > 0.005 && (
+            <div className="card" style={{ marginTop: 16, borderLeft: "3px solid var(--danger)" }}>
+              <div className="card-title">Differenza sui conti di liquidità ({fmt(rfDir.differenzaNascosta)})</div>
+              <div style={{ fontSize: 12, color: "var(--ink-2)", margin: "8px 0" }}>
+                La variazione delle disponibilità liquide calcolata per categoria non coincide con quella dei conti
+                di liquidità. La differenza è esposta nella prima area così le Disponibilità liquide finali restano
+                corrette: di solito dipende da una scrittura di apertura con data sbagliata.
+              </div>
+            </div>
+          )}
+
+          <div className="card" style={{ marginTop: 16 }}>
+            <div className="card-title">Natura dei conti (metodo indiretto)</div>
+            <div style={{ fontSize: 12, color: "var(--ink-2)", margin: "8px 0" }}>
+              Serve a separare il costo storico delle immobilizzazioni (flusso di investimento) dai fondi
+              ammortamento (rettifica non monetaria che torna nella gestione operativa).
+            </div>
+            <table style={{ width: "100%" }}>
+              <thead><tr><th>Cod.</th><th>Conto</th><th className="num">Saldo</th><th>Natura</th></tr></thead>
+              <tbody>
+                {contiOrdinati.filter(m => Math.abs(m.saldo) > 0.005).map(m => (
+                  <tr key={m.codice}>
+                    <td className="mono">{String(m.codice).padStart(2, "0")}</td>
+                    <td>{(m.nome || "").trim()}</td>
+                    <td className="num">{fmtP(m.saldo)}</td>
+                    <td>
+                      <select value={(schema.rf?.natura || {})[String(m.codice)] || naturaAuto(contiMap[m.codice])}
+                              onChange={e => api.setNatura(m.codice, e.target.value)}
+                              style={{ fontSize: 12, width: "100%", maxWidth: 240 }}>
+                        {SB_NATURE.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab === "rfr" && <SBRfRiclassificato R={rfRicl} />}
+
+      {tab === "prospetti" && (
+        <div style={{ display: "grid", gap: 18 }}>
+          <div className="card">
+            <div className="card-title">Stato Patrimoniale</div>
+            {["attivo", "passivo"].map(lato => (
+              <div key={lato} style={{ marginTop: 14 }}>
+                <div style={{ fontFamily: "'Fraunces',serif", fontSize: 15, marginBottom: 6 }}>
+                  {lato === "attivo" ? "ATTIVO" : "PASSIVO E PATRIMONIO NETTO"}
+                </div>
+                <table style={{ width: "100%" }}>
+                  <tbody>
+                    {prospetti.sp.filter(c => c.lato === lato).map(cl => (
+                      <React.Fragment key={cl.id}>
+                        <tr style={{ background: "var(--panel-2)" }}>
+                          <td style={{ fontWeight: 700 }}>{cl.codice ? cl.codice + ") " : ""}{cl.nome}</td>
+                          <td className="num" style={{ fontWeight: 700 }}>{fmtP(cl.totale, 0)}</td>
+                        </tr>
+                        {righeVociConSottosezioni(cl.voci)}
+                      </React.Fragment>
+                    ))}
+                    <tr style={{ borderTop: "2px solid var(--ink)" }}>
+                      <td style={{ fontFamily: "'Fraunces',serif", fontSize: 14 }}>
+                        {lato === "attivo" ? "TOTALE ATTIVO" : "TOTALE PASSIVO E PN"}
+                      </td>
+                      <td className="num" style={{ fontWeight: 700, fontSize: 14 }}>
+                        {fmtP((lato === "attivo" ? prospetti.totAttivo : prospetti.totPassivo), 0)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            ))}
+            {Math.abs(prospetti.sbilancio) >= 0.01 && (
+              <div style={{ marginTop: 10, color: "var(--danger)", fontSize: 13 }}>
+                ⚠ Sbilancio di {fmt0Euro(prospetti.sbilancio)} tra attivo e passivo. Vedi la scheda Controlli.
+              </div>
+            )}
+          </div>
+
+          <div className="card">
+            <div className="card-title">Conto Economico</div>
+            <table style={{ width: "100%", marginTop: 10 }}>
+              <tbody>
+                {prospetti.ce.map(cl => (
+                  <React.Fragment key={cl.id}>
+                    <tr style={{ background: "var(--panel-2)" }}>
+                      <td style={{ fontWeight: 700 }}>
+                        {cl.codice ? cl.codice + ") " : ""}{cl.nome}
+                        <span style={{ color: "var(--ink-3)", fontWeight: 400, fontSize: 11 }}> {cl.segno >= 0 ? "(+)" : "(−)"}</span>
+                      </td>
+                      <td className="num" style={{ fontWeight: 700 }}>{fmtP(cl.totale, 0)}</td>
+                    </tr>
+                    {righeVociConSottosezioni(cl.voci)}
+                  </React.Fragment>
+                ))}
+                <tr style={{ borderTop: "2px solid var(--ink)" }}>
+                  <td style={{ fontFamily: "'Fraunces',serif", fontSize: 14 }}>RISULTATO D'ESERCIZIO</td>
+                  <td className="num" style={{ fontWeight: 700, fontSize: 14, color: prospetti.risultato >= 0 ? "var(--accent)" : "var(--danger)" }}>
+                    {fmtP(prospetti.risultato, 0)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="card">
+            <div className="card-title">Rendiconto Finanziario · metodo diretto</div>
+            <table style={{ width: "100%", marginTop: 10 }}>
+              <tbody>
+                {rfDir.aree.map(a => (
+                  <React.Fragment key={a.id}>
+                    <tr style={{ background: "var(--panel-2)" }}>
+                      <td style={{ fontWeight: 700 }}>{a.codice ? a.codice + ") " : ""}{a.nome}</td>
+                      <td className="num" style={{ fontWeight: 700 }}>{fmtP(a.totale, 0)}</td>
+                    </tr>
+                    {(a.voci || []).map(v => (
+                      <React.Fragment key={v.id}>
+                        <tr>
+                          <td style={{ paddingLeft: 18, fontWeight: 600, fontStyle: v.virtuale ? "italic" : "normal",
+                                       color: v.virtuale ? "var(--danger)" : "inherit" }}>
+                            {v.codice ? v.codice + ". " : ""}{v.nome}
+                          </td>
+                          <td className="num" style={{ fontWeight: 600 }}>{fmtP(v.totale, 0)}</td>
+                        </tr>
+                        {(v.righe || []).map(r => (
+                          <tr key={r.cat}>
+                            <td style={{ paddingLeft: 34, fontSize: 12.5, color: "var(--ink-2)" }}>{r.cat}</td>
+                            <td className="num" style={{ fontSize: 12.5, color: r.val < 0 ? "var(--danger)" : "var(--ink-2)" }}>{fmtP(r.val, 0)}</td>
+                          </tr>
+                        ))}
+                      </React.Fragment>
+                    ))}
+                    {(a.voci || []).length === 0 && (
+                      <tr><td style={{ paddingLeft: 26, color: "var(--ink-3)", fontSize: 12 }}>Nessuna sottovoce</td><td className="num">—</td></tr>
+                    )}
+                  </React.Fragment>
+                ))}
+                <tr style={{ borderTop: "2px solid var(--ink)" }}>
+                  <td style={{ fontFamily: "'Fraunces',serif", fontSize: 14 }}>VARIAZIONE DISPONIBILITÀ LIQUIDE</td>
+                  <td className="num" style={{ fontWeight: 700, fontSize: 14 }}>{fmtP(rfDir.variazione, 0)}</td>
+                </tr>
+                <tr><td style={{ paddingLeft: 26 }}>Disponibilità liquide iniziali</td><td className="num">{fmtP(rfDir.apertura, 0)}</td></tr>
+                {rfDir.dettaglioLiquidita.map(d => (
+                  <tr key={"ini-" + d.nome}>
+                    <td style={{ paddingLeft: 40, fontSize: 12.5, color: "var(--ink-2)" }}>{d.nome}</td>
+                    <td className="num" style={{ fontSize: 12.5, color: "var(--ink-2)" }}>{fmtP(d.apertura, 0)}</td>
+                  </tr>
+                ))}
+                <tr><td style={{ paddingLeft: 26, fontWeight: 600 }}>Disponibilità liquide finali</td><td className="num" style={{ fontWeight: 600 }}>{fmtP(rfDir.chiusura, 0)}</td></tr>
+                {rfDir.dettaglioLiquidita.map(d => (
+                  <tr key={"fin-" + d.nome}>
+                    <td style={{ paddingLeft: 40, fontSize: 12.5, color: "var(--ink-2)" }}>{d.nome}</td>
+                    <td className="num" style={{ fontSize: 12.5, color: "var(--ink-2)" }}>{fmtP(d.chiusura, 0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Il metodo indiretto "puro" e' superato dall'RF Riclassificato, che parte
+              dall'EBITDA e arriva alla variazione di liquidita' con piu' dettaglio. Il calcolo
+              indiretto resta solo come controllo, nella scheda Controlli. */}
+          <SBRfRiclassificato R={rfRicl} />
+        </div>
+      )}
+
+      {tab === "controlli" && (
+        <div style={{ display: "grid", gap: 16 }}>
+          <div className="card">
+            <div className="card-title">Quadratura patrimoniale</div>
+            <table style={{ width: "100%", marginTop: 8 }}>
+              <tbody>
+                <tr><td>Totale Attivo</td><td className="num">{fmt(prospetti.totAttivo, 0)}</td></tr>
+                <tr><td>Totale Passivo e Patrimonio Netto</td><td className="num">{fmt(prospetti.totPassivo, 0)}</td></tr>
+                <tr style={{ borderTop: "1px solid var(--rule)" }}>
+                  <td style={{ fontWeight: 700 }}>Differenza</td>
+                  <td className="num" style={{ fontWeight: 700, color: Math.abs(prospetti.sbilancio) < 0.01 ? "var(--accent)" : "var(--danger)" }}>
+                    {fmt(prospetti.sbilancio, 0)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div style={{ fontSize: 12, color: "var(--ink-2)", marginTop: 10, lineHeight: 1.5 }}>
+              Il risultato del Conto Economico ({fmt0Euro(prospetti.risultato)}) confluisce automaticamente
+              nella voce di Patrimonio Netto contrassegnata come calcolata.
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-title">Rendiconto: diretto contro indiretto</div>
+            <table style={{ width: "100%", marginTop: 8 }}>
+              <thead><tr><th>Area</th><th className="num">Diretto</th><th className="num">Indiretto</th><th className="num">Differenza</th></tr></thead>
+              <tbody>
+                {[["Gestione operativa", rfDir.aree[0]?.totale || 0, rfInd.operativo],
+                  ["Investimento", rfDir.aree[1]?.totale || 0, rfInd.investimenti],
+                  ["Finanziamento", rfDir.aree[2]?.totale || 0, rfInd.finanziamenti]].map(([lab, d, i]) => {
+                  const diff = Math.round((i - d) * 100) / 100;
+                  return (
+                    <tr key={lab}>
+                      <td>{lab}</td>
+                      <td className="num">{fmt(d)}</td>
+                      <td className="num">{fmt(i)}</td>
+                      <td className="num" style={{ color: Math.abs(diff) < 0.01 ? "var(--accent)" : "var(--danger)", fontWeight: 600 }}>{fmt(diff)}</td>
+                    </tr>
+                  );
+                })}
+                <tr style={{ borderTop: "1px solid var(--rule)" }}>
+                  <td style={{ fontWeight: 700 }}>Totale</td>
+                  <td className="num" style={{ fontWeight: 700 }}>{fmt(rfDir.variazione)}</td>
+                  <td className="num" style={{ fontWeight: 700 }}>{fmt(rfInd.variazione)}</td>
+                  <td className="num" style={{ fontWeight: 700, color: Math.abs(diffRF) < 0.01 ? "var(--accent)" : "var(--danger)" }}>{fmt(diffRF)}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div style={{ fontSize: 12, color: "var(--ink-2)", marginTop: 10, lineHeight: 1.5 }}>
+              Il totale coincide sempre: è un'identità contabile. Le differenze <b>per area</b> sono invece
+              il controllo utile, perché segnalano categorie di movimento classificate nell'area sbagliata
+              (per esempio acquisti di cespiti finiti tra le uscite operative).
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-title">
+              Conti movimentati non assegnati {controlli.mancanti.length > 0 && <span style={{ color: "var(--danger)" }}>({controlli.mancanti.length})</span>}
+            </div>
+            {controlli.mancanti.length === 0 ? (
+              <div style={{ color: "var(--accent)", fontSize: 13, marginTop: 8 }}>
+                Nessuno: ogni conto con saldo diverso da zero è mappato in una voce di bilancio.
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: 12, color: "var(--ink-2)", margin: "8px 0" }}>
+                  Questi conti hanno saldo ma non compaiono in nessun prospetto: sono la causa di eventuali sbilanci.
+                </div>
+                <table style={{ width: "100%" }}>
+                  <thead><tr><th>Cod.</th><th>Conto</th><th className="num">Saldo</th><th></th></tr></thead>
+                  <tbody>
+                    {controlli.mancanti.map(m => (
+                      <tr key={m.codice}>
+                        <td className="mono">{String(m.codice).padStart(2, "0")}</td>
+                        <td>{m.nome}</td>
+                        <td className="num">{fmt(m.saldo)}</td>
+                        <td><button className="btn ghost sm" onClick={() => escludiConto(m.codice)}>Escludi</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </div>
+
+          {controlli.doppi.length > 0 && (
+            <div className="card">
+              <div className="card-title" style={{ color: "var(--danger)" }}>Conti assegnati più volte ({controlli.doppi.length})</div>
+              <div style={{ fontSize: 12, color: "var(--ink-2)", margin: "8px 0" }}>
+                Lo stesso saldo viene conteggiato in più voci: è il doppio conteggio tipico che fa
+                sbilanciare attivo e passivo.
+              </div>
+              <table style={{ width: "100%" }}>
+                <thead><tr><th>Cod.</th><th>Conto</th><th>Assegnato a</th></tr></thead>
+                <tbody>
+                  {controlli.doppi.map(d => (
+                    <tr key={d.codice}>
+                      <td className="mono">{String(d.codice).padStart(2, "0")}</td>
+                      <td>{(contiMap[d.codice]?.nome || "").trim()}</td>
+                      <td style={{ fontSize: 12 }}>{d.dove.join(" · ")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {esclusi.length > 0 && (
+            <div className="card">
+              <div className="card-title">Conti esclusi volontariamente ({esclusi.length})</div>
+              <table style={{ width: "100%", marginTop: 8 }}>
+                <tbody>
+                  {esclusi.map(c => (
+                    <tr key={c}>
+                      <td className="mono">{String(c).padStart(2, "0")}</td>
+                      <td>{(contiMap[c]?.nome || "").trim()}</td>
+                      <td className="num">{fmt((mastrini.find(m => Number(m.codice) === Number(c)) || {}).saldo || 0)}</td>
+                      <td><button className="btn ghost sm" onClick={() => reincludiConto(c)}>Reintegra</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 const NAV = [
   {sec:'Panoramica',items:[
     {id:'dashboard',ico:'◫',label:'Dashboard'},
@@ -6988,6 +9290,7 @@ const NAV = [
   {sec:'Report',items:[
     /* Pivot Conti nascosta (come nel gestionale futsal): per riattivarla ripristinare questa voce e il render di PagePivotConti */
     {id:'bilancio',ico:'⚖',label:'Bilancio di Verifica'},
+    {id:'schema',ico:'§',label:'Schema di Bilancio'},
     {id:'rendiconto',ico:'~',label:'Rendiconto Finanz.'},
     {id:'controller',ico:'◎',label:'Controller'},
     {id:'budget',ico:'◑',label:'Budget'},
@@ -7214,6 +9517,7 @@ function App({authUser, onLogout}){
           {page==='movimenti' && <PageMovimenti scritture={scritture} saldi={saldi}/>}
           {page==='analisi' && <PageAnalisi scritture={scritture} cespiti={cespiti} budgets={budgets} categorie={categorie} toast={showToast}/>}
           {page==='bilancio' && <PageBilancio saldi={saldi}/>}
+          {page==='schema' && <PageSchemaBilancio scritture={scritture} conti={conti} categorie={categorie} toast={showToast}/>}
           {page==='rendiconto' && <PageRendiconto scritture={scritture} categorie={categorie} updateScritture={updateScritture} toast={showToast}/>}
           {page==='controller' && <PageController scritture={scritture} categorie={categorie} budget={budget} setBudget={setBudget}/>}
           {page==='budget' && <PageBudget scritture={scritture} budgets={budgets} setBudgets={setBudgets} toast={showToast}/>}
