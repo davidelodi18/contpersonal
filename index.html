@@ -933,6 +933,10 @@ table.tbl.rf-matrix.rf-fit{ min-width:0; }
 .an-tbl .an-pos { color: var(--success); }
 .an-tbl .an-neg { color: var(--danger); }
 .an-tbl tr.tot td.an-cmp { background: var(--panel-2); }
+.an-tbl .an-pct { display: block; font-size: 10px; color: var(--ink-3); line-height: 1.1; }
+.an-tbl td.an-quota { position: relative; min-width: 92px; }
+.an-tbl .an-quota-bar { position: absolute; left: 6px; top: 50%; height: 6px; margin-top: -3px; max-width: calc(100% - 60px); background: rgba(31,79,143,.28); border-radius: 3px; }
+.an-tbl .an-quota-txt { position: relative; font-weight: 600; }
 .an-tbl .cl:hover { text-decoration: underline; color: var(--accent); }
 .an-mini { padding: 3px 6px !important; font-size: 11.5px !important; min-height: 0 !important; }
 .an-editor { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
@@ -5663,6 +5667,8 @@ const anFormatta = (v, formato) => {
 // ---------- confronto tra colonne della pivot (Δ e Δ %) ----------
 const anNorm = (t) => String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 const anFmtDelta = (v, formato) => (v > 1e-9 ? "+" : v < -1e-9 ? "−" : "") + anFormatta(Math.abs(v), formato);
+const anPct = (v, t) => Math.abs(t) > 1e-9 ? numIT((Number(v) || 0) / t * 100, 1) + "%" : "—";
+// peso di ogni valore sul totale (quote %): tabella con percTot, pivot con percPivot = colonna | riga | totale
 const anFmtPerc = (p) => p === null || p === undefined || !isFinite(p) ? "—" : (p > 1e-9 ? "+" : p < -1e-9 ? "−" : "") + numIT(Math.abs(p) * 100, 1) + "%";
 const anClsDelta = (d, inverti) => Math.abs(d) < 1e-7 ? "" : ((d > 0) !== !!inverti ? " an-pos" : " an-neg");
 const anPerc = (va, vb) => Math.abs(va) > 1e-9 ? (vb - va) / Math.abs(va) : null;
@@ -5826,9 +5832,13 @@ function anTabellare(w, dati, fonte) {
   }
   if (w.tipo === "filtro") return { intestazioni: [w.dim, "Righe", "Stato"], righe: dati.valori.map(x => [x.v, x.n, x.stato === "sel" ? "Selezionato" : x.stato === "poss" ? "Possibile" : "Escluso"]) };
   if (w.tipo === "tabella") {
-    const r = dati.rows.map(x => [...x.vals, ...x.mis]);
-    if (dati.mis.length && dati.dims.length) r.push(["Totale", ...dati.dims.slice(1).map(() => ""), ...dati.totale]);
-    return { intestazioni: [...dati.dims, ...dati.mis.map(anEtichettaMisura)], righe: r };
+    const conPerc = !!w.percTot && dati.mis.length > 0;
+    const t0 = conPerc ? dati.totale[0] : 0;
+    const q = (v) => Math.abs(t0) > 1e-9 ? v / t0 : null;
+    const r = dati.rows.map(x => [...x.vals, ...x.mis, ...(conPerc ? [q(x.mis[0])] : [])]);
+    if (dati.mis.length && dati.dims.length) r.push(["Totale", ...dati.dims.slice(1).map(() => ""), ...dati.totale, ...(conPerc ? [Math.abs(t0) > 1e-9 ? 1 : null] : [])]);
+    const intest = [...dati.dims, ...dati.mis.map(anEtichettaMisura), ...(conPerc ? ["% sul totale"] : [])];
+    return { intestazioni: intest, righe: r, quota: conPerc ? [intest.length - 1] : [] };
   }
   if (w.tipo === "pivot") {
     const cols = dati.colonne || dati.colVals.map(cv => ({ t: "v", cv }));
@@ -5883,7 +5893,8 @@ function AnGrafico({ w, dati, formato, onEtichetta, registra }) {
           legend: { display: multi || tipo === "doughnut", position: "bottom", labels: { font: { size: 11 }, boxWidth: 12, padding: 8 } },
           tooltip: { callbacks: { label: (ctx) => {
             const v = tipo === "doughnut" ? ctx.parsed : (orizz ? ctx.parsed.x : ctx.parsed.y);
-            return `${(multi || tipo === "doughnut") ? (tipo === "doughnut" ? ctx.label : ctx.dataset.label) + ": " : ""}${anFormatta(v, formato)}`;
+            const totD = tipo === "doughnut" ? (ctx.dataset.data || []).reduce((a, b) => a + (Number(b) || 0), 0) : 0;
+            return `${(multi || tipo === "doughnut") ? (tipo === "doughnut" ? ctx.label : ctx.dataset.label) + ": " : ""}${anFormatta(v, formato)}${tipo === "doughnut" ? " · " + anPct(v, totD) : ""}`;
           } } },
         },
         scales: tipo === "doughnut" ? {} : (orizz ? { x: asseV, y: asseC } : { x: asseC, y: asseV }),
@@ -5958,18 +5969,25 @@ function AnWidget({ w, fonte, selezioni, onSeleziona, modifica, strumenti, regis
   } else if (w.tipo === "tabella") {
     corpo = !dati.rows.length ? <div className="an-vuoto">Nessun dato con le selezioni attuali</div> : (
       <table className="an-tbl">
-        <thead><tr>{dati.dims.map(d => <th key={d}>{d}</th>)}{dati.mis.map((m, i) => <th key={i} className="n">{anEtichettaMisura(m)}</th>)}</tr></thead>
+        <thead><tr>{dati.dims.map(d => <th key={d}>{d}</th>)}{dati.mis.map((m, i) => <th key={i} className="n">{anEtichettaMisura(m)}</th>)}{w.percTot && dati.mis.length > 0 && <th className="n">% sul totale</th>}</tr></thead>
         <tbody>
           {dati.rows.map((r, i) => (
             <tr key={i}>
               {r.vals.map((v, j) => <td key={j} className="cl" onClick={() => onSeleziona(dati.dims[j], v)}>{v}</td>)}
               {r.mis.map((v, j) => <td key={"m" + j} className="n">{anFormatta(v, anFormatoMisura(dati.mis[j], fonte, w.formato))}</td>)}
+              {w.percTot && dati.mis.length > 0 && (
+                <td className="n an-quota">
+                  <span className="an-quota-bar" style={{ width: Math.max(0, Math.min(100, Math.abs(dati.totale[0]) > 1e-9 ? r.mis[0] / dati.totale[0] * 100 : 0)) + "%" }} />
+                  <span className="an-quota-txt">{anPct(r.mis[0], dati.totale[0])}</span>
+                </td>
+              )}
             </tr>
           ))}
           {dati.mis.length > 0 && dati.dims.length > 0 && dati.rows.length > 1 && (
             <tr className="tot">
               <td colSpan={dati.dims.length}>Totale</td>
               {dati.totale.map((v, j) => <td key={j} className="n">{anFormatta(v, anFormatoMisura(dati.mis[j], fonte, w.formato))}</td>)}
+              {w.percTot && <td className="n">{Math.abs(dati.totale[0]) > 1e-9 ? "100%" : "—"}</td>}
             </tr>
           )}
         </tbody>
@@ -5992,20 +6010,24 @@ function AnWidget({ w, fonte, selezioni, onSeleziona, modifica, strumenti, regis
               <td className="cl" onClick={() => onSeleziona(w.dim, rv)}>{rv}</td>
               {dati.colonne.map((c, i) => {
                 const get = (cv) => dati.celle.get(rv + "\u0001" + cv) || 0;
-                if (c.t === "v") { const v = get(c.cv); return <td key={i} className="n">{v ? anFormatta(v, formato) : ""}</td>; }
+                if (c.t === "v") {
+                  const v = get(c.cv);
+                  const base = w.percPivot === "colonna" ? (dati.totC.get(c.cv) || 0) : w.percPivot === "riga" ? (dati.totR.get(rv) || 0) : dati.tot;
+                  return <td key={i} className="n">{v ? anFormatta(v, formato) : ""}{v && w.percPivot ? <span className="an-pct">{anPct(v, base)}</span> : null}</td>;
+                }
                 const va = get(c.a), vb = get(c.b), d = vb - va;
                 if (c.t === "d") return <td key={i} className={"n an-cmp" + anClsDelta(d, inverti)} title={anEtichettaCmp(c)}>{Math.abs(d) > 1e-7 ? anFmtDelta(d, formato) : ""}</td>;
                 const pc = anPerc(va, vb);
                 return <td key={i} className={"n an-cmp" + (pc === null ? "" : anClsDelta(d, inverti))} title={anEtichettaCmp(c)}>{Math.abs(d) > 1e-7 || pc !== null ? anFmtPerc(pc) : ""}</td>;
               })}
-              {dati.mostraTotale && <td className="n"><b>{anFormatta(dati.totR.get(rv), formato)}</b></td>}
+              {dati.mostraTotale && <td className="n"><b>{anFormatta(dati.totR.get(rv), formato)}</b>{w.percPivot && w.percPivot !== "riga" ? <span className="an-pct">{anPct(dati.totR.get(rv), dati.tot)}</span> : null}</td>}
             </tr>
           ))}
           <tr className="tot">
             <td>Totale</td>
             {dati.colonne.map((c, i) => {
               const get = (cv) => dati.totC.get(cv) || 0;
-              if (c.t === "v") return <td key={i} className="n">{anFormatta(get(c.cv), formato)}</td>;
+              if (c.t === "v") return <td key={i} className="n">{anFormatta(get(c.cv), formato)}{w.percPivot && w.percPivot !== "colonna" ? <span className="an-pct">{anPct(get(c.cv), dati.tot)}</span> : null}</td>;
               const va = get(c.a), vb = get(c.b), d = vb - va;
               if (c.t === "d") return <td key={i} className={"n an-cmp" + anClsDelta(d, inverti)}>{anFmtDelta(d, formato)}</td>;
               const pc = anPerc(va, vb);
@@ -6191,6 +6213,13 @@ function AnEditor({ iniziale, fonti, selezioni, onSalva, onChiudi }) {
                 </div>
               )}
 
+              {d.tipo === "tabella" && (
+                <label className="an-check">
+                  <input type="checkbox" checked={!!d.percTot} onChange={e => set({ percTot: e.target.checked })} />
+                  Aggiungi la colonna "% sul totale" (sulla prima misura)
+                </label>
+              )}
+
               {d.tipo === "kpi" && (
                 <label className="an-check">
                   <input type="checkbox" checked={d.perStagione !== false} onChange={e => set({ perStagione: e.target.checked })} />
@@ -6261,6 +6290,14 @@ function AnEditor({ iniziale, fonti, selezioni, onSalva, onChiudi }) {
                       <input type="checkbox" checked={!!d.nascondiTotale} onChange={e => set({ nascondiTotale: e.target.checked })} />
                       Nascondi la colonna Totale
                     </label>
+                    <div className="an-field" style={{ marginTop: 4 }}><label>Peso % di ogni cella</label>
+                      <select value={d.percPivot || ""} onChange={e => set({ percPivot: e.target.value })}>
+                        <option value="">Non mostrare</option>
+                        <option value="colonna">% sul totale della colonna (es. voce sul totale del mese)</option>
+                        <option value="riga">% sul totale della riga (es. mese sul totale della voce)</option>
+                        <option value="totale">% sul totale generale</option>
+                      </select>
+                    </div>
                     <div className="an-nota">Δ = B − A · Δ % = (B − A) / |A|. Se A è zero la percentuale non si calcola (—). Per scegliere quali mesi mostrare usa un filtro fisso sul campo delle colonne.</div>
                   </div>
                 );
@@ -6660,7 +6697,7 @@ function PageAnalisi({ scritture, cespiti, budgets, categorie, toast }) {
       const f = fonti[w.fonte];
       const t = anTabellare(w, anDatiWidget(w, f, selezioni), f);
       const ws = XLSX.utils.aoa_to_sheet([t.intestazioni, ...t.righe]);
-      const colPerc = new Set(t.perc || []);
+      const colPerc = new Set([...(t.perc || []), ...(t.quota || [])]);
       Object.keys(ws).forEach(ref => { if (ref[0] !== "!" && ws[ref].t === "n") ws[ref].z = colPerc.has(XLSX.utils.decode_cell(ref).c) ? "0.0%" : "#,##0.00"; });
       ws["!cols"] = t.intestazioni.map((_, j) => ({ wch: j === 0 ? 30 : 14 }));
       let nome = `${i + 1} ${w.titolo || anTitoloAuto(w)}`.replace(/[\\\/\?\*\[\]:]/g, " ").slice(0, 31).trim();
@@ -6734,7 +6771,8 @@ function PageAnalisi({ scritture, cespiti, budgets, categorie, toast }) {
       const t = anTabellare(w, dati, f);
       const colPerc = new Set(t.perc || []);
       const colDelta = new Set((t.intestazioni || []).map((h, j) => /^Δ /.test(String(h)) && !colPerc.has(j) ? j : -1).filter(j => j >= 0));
-      const fmtCella = (v, j) => colPerc.has(j) ? (v === null || v === undefined ? "n.c." : anPdfTxt(anFmtPerc(v)))
+      const colQuota = new Set(t.quota || []);
+      const fmtCella = (v, j) => colQuota.has(j) ? (v === null || v === undefined ? "—" : anPdfTxt(numIT(v * 100, 1) + "%")) : colPerc.has(j) ? (v === null || v === undefined ? "n.c." : anPdfTxt(anFmtPerc(v)))
         : colDelta.has(j) && typeof v === "number" ? anPdfTxt(anFmtDelta(v, formato))
         : typeof v === "number" ? anPdfTxt(anFormatta(v, w.tipo === "filtro" ? "numero" : formato)) : anPdfTxt(v ?? "");
       doc.autoTable({
