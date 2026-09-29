@@ -5330,7 +5330,7 @@ const numIT = (x, dec = 2) => {
 const anMeseDa = (iso) => iso ? anCap(meseOf(iso)) : "";
 const anAnnoDa = (iso) => /^\d{4}/.test(iso || "") ? String(iso).slice(0, 4) : "";
 
-const AN_AGG = [["somma", "Somma"], ["media", "Media"], ["min", "Minimo"], ["max", "Massimo"], ["conteggio", "Conteggio righe"], ["distinti", "Valori distinti"]];
+const AN_AGG = [["somma", "Somma"], ["mediaMese", "Media mensile"], ["mediaMeseVal", "Media mensile (solo mesi con valori)"], ["media", "Media per riga"], ["min", "Minimo"], ["max", "Massimo"], ["conteggio", "Conteggio righe"], ["distinti", "Valori distinti"]];
 const AN_TIPI = [["kpi", "KPI"], ["barre", "Barre"], ["barreO", "Barre orizzontali"], ["linee", "Linee"], ["torta", "Torta"],
   ["tabella", "Tabella"], ["pivot", "Tabella pivot"], ["filtro", "Pannello filtro"]];
 const AN_GRAFICI = ["barre", "barreO", "linee", "torta"];
@@ -5618,11 +5618,37 @@ function anFiltra(fonte, filtri, selezioni, escludiKey) {
   if (!fissi.length && !sel.length) return fonte.righe;
   return fonte.righe.filter(r => fissi.every(f => f.valori.includes(anVal(r[f.campo]))) && sel.every(f => f.valori.includes(anVal(r[f.campo]))));
 }
+// Mesi del periodo per la "Media mensile": tutti i mesi presenti nella fonte con
+// gli anni della dashboard, i filtri fissi dell'oggetto e le sole selezioni di
+// tempo (Anno, Mese, Anno-mese, Data). Così selezionando una voce la media resta
+// sui mesi del periodo e non solo su quelli in cui quella voce ha movimenti.
+const AN_CAMPI_TEMPO = ["anno", "mese", "anno-mese", "data"];
+function anConMesi(w, fonte, sel) {
+  if (!fonte || !(w.misure || []).some(m => m && m.agg === "mediaMese")) return w;
+  const selT = {};
+  Object.entries(sel || {}).forEach(([k, v]) => { if (AN_CAMPI_TEMPO.includes(k)) selT[k] = v; });
+  const righe = anFiltra(fonte, w.filtri, selT, null);
+  const mesi = new Set(righe.map(r => r["Anno-mese"] || String(r["Data"] || "").slice(0, 7)).filter(Boolean));
+  return { ...w, misure: w.misure.map(m => m && m.agg === "mediaMese" ? { ...m, _nMesi: mesi.size } : m) };
+}
 function anAggrega(righe, m) {
   const agg = (m && m.agg) || "somma";
   if (agg === "conteggio") return righe.length;
   if (!m || !m.campo) return 0;
   if (agg === "distinti") return new Set(righe.map(r => anVal(r[m.campo]))).size;
+  // Media mensile: somma divisa per i mesi. "mediaMese" usa i mesi del periodo
+  // (calcolati da anConMesi, _nMesi); "mediaMeseVal" solo i mesi in cui c'è un valore.
+  if (agg === "mediaMese" || agg === "mediaMeseVal") {
+    let tot = 0; const mesi = new Set();
+    righe.forEach(r => {
+      const v = r[m.campo]; if (v === "" || v === null || v === undefined) return;
+      const x = Number(v); if (isNaN(x)) return;
+      tot += x;
+      if (Math.abs(x) > 1e-9) mesi.add(r["Anno-mese"] || String(r["Data"] || "").slice(0, 7));
+    });
+    const nm = agg === "mediaMese" && m._nMesi ? m._nMesi : mesi.size;
+    return nm ? Math.round(tot / nm * 100) / 100 : 0;
+  }
   let n = 0, sum = 0, min = Infinity, max = -Infinity;
   righe.forEach(r => {
     const v = r[m.campo];
@@ -5724,6 +5750,7 @@ function anDatiWidget(w, fonte, sel) {
     const selV = (sel[k] && sel[k].valori) || [];
     return { valori: tutti.map(v => ({ v, n: cnt.get(v) || 0, stato: selV.includes(v) ? "sel" : (cnt.has(v) ? "poss" : "escl") })) };
   }
+  w = anConMesi(w, fonte, sel);
   const righe = anFiltra(fonte, w.filtri, sel, null);
   const m0 = (w.misure || [])[0] || { agg: "conteggio" };
   if (m0.agg !== "conteggio" && !anHaCampo(fonte, m0.campo)) return { errore: "Scegli la misura." };
