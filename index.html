@@ -9401,7 +9401,12 @@ function App({authUser, onLogout}){
   const [menuOpen,setMenuOpen]=useState(false);
   const [toast,setToastState]=useState({msg:'',kind:''});
   const toastTimer=useRef(null);
-  const showToast=(msg,kind)=>{ setToastState({msg,kind}); clearTimeout(toastTimer.current); toastTimer.current=setTimeout(()=>setToastState({msg:'',kind:''}),2600); };
+  const showToast=(msg,kind)=>{ setToastState({msg,kind}); clearTimeout(toastTimer.current); toastTimer.current=setTimeout(()=>setToastState({msg:'',kind:''}),kind==='error'?8000:2600); };
+  // errori di scrittura su Firebase: prima venivano ignorati in silenzio
+  const fbErr = e => { console.error('Firebase',e); showToast('⚠ Salvataggio NON riuscito: '+((e&&(e.code||e.message))||e),'error'); };
+  const fbOnline = useRef(true);
+  useEffect(()=>{ if(!firebaseReady) return; const r=db.ref('.info/connected'); const h=r.on('value',s=>{ fbOnline.current=!!s.val(); }); return ()=>r.off('value',h); },[]);
+
 
   // ---- caricamento iniziale (Firebase o locale) ----
   useEffect(()=>{
@@ -9440,24 +9445,24 @@ function App({authUser, onLogout}){
   const saldi = useMemo(()=>calcSaldi(scritture),[scritture]);
 
   const addScrittura = s => {
-    if(firebaseReady){ const {id,...rest}=s; db.ref('scritture/'+id).set(rest); }
+    if(firebaseReady){ const {id,...rest}=s; db.ref('scritture/'+id).set(rest).catch(fbErr); }
     else setScritture(arr=>{ const n=[...arr,s]; saveScritture(n); return n; });
   };
   const updateScrittura = (id,patch) => {
     if(firebaseReady){
       const cur=scritture.find(s=>s.id===id)||{};
       const {id:_,...rest}={...cur,...patch};
-      db.ref('scritture/'+id).set(rest);
+      db.ref('scritture/'+id).set(rest).catch(fbErr);
     } else setScritture(arr=>{ const n=arr.map(s=>s.id===id?{...s,...patch}:s); saveScritture(n); return n; });
   };
   const deleteScrittura = id => {
-    if(firebaseReady){ db.ref('scritture/'+id).remove(); }
+    if(firebaseReady){ db.ref('scritture/'+id).remove().catch(fbErr); }
     else setScritture(arr=>{ const n=arr.filter(s=>s.id!==id); saveScritture(n); return n; });
   };
   const deleteScritture = ids => {
     if(!ids||!ids.length) return;
     const set=new Set(ids);
-    if(firebaseReady){ const up={}; ids.forEach(id=>{ up['scritture/'+id]=null; }); db.ref().update(up); }
+    if(firebaseReady){ const up={}; ids.forEach(id=>{ up['scritture/'+id]=null; }); db.ref().update(up).catch(fbErr); }
     else setScritture(arr=>{ const n=arr.filter(s=>!set.has(s.id)); saveScritture(n); return n; });
   };
   const updateScritture = updates => {
@@ -9473,13 +9478,17 @@ function App({authUser, onLogout}){
   };
   const addScritture = list => {
     if(!list||!list.length) return;
-    if(firebaseReady){ const up={}; list.forEach(s=>{ const {id,...rest}=s; up['scritture/'+id]=rest; }); db.ref().update(up); }
+    if(firebaseReady){
+      const up={}; list.forEach(s=>{ const {id,...rest}=s; up['scritture/'+id]=rest; });
+      if(!fbOnline.current) showToast('⚠ Sei offline: le scritture saranno salvate solo quando torni online (non chiudere l\'app)','error');
+      try{ db.ref().update(up).then(()=>{ if(!fbOnline.current) return; }).catch(fbErr); }catch(e){ fbErr(e); }
+    }
     else setScritture(arr=>{ const n=[...arr,...list]; saveScritture(n); return n; });
   };
   const setMappa = m => {
     setMappaCat(m);
     setMappaState(m);
-    if(firebaseReady){ db.ref('mappaCategorie').set(mappaToFB(m)).catch(e=>console.error('Salvataggio mappatura fallito',e)); }
+    if(firebaseReady){ db.ref('mappaCategorie').set(mappaToFB(m)).catch(fbErr); }
     else { try{ localStorage.setItem('contabilita_mappa_v1', JSON.stringify(m)); }catch(e){} }
   };
   const setConti = list => {
