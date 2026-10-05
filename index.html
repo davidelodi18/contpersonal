@@ -5080,7 +5080,8 @@ function PageVariazioni({onAddMany, scritture, saldi, categorie, toast}){
   const [liq,setLiq]=useState(3);                 // conto liquidità: default CASSA
   const [dataDef,setDataDef]=useState(todayISO());
   // --- rettifica automatica spese cassa ---
-  const [mkRett,setMkRett]=useState(()=>todayISO().slice(0,7));
+  const [mkRett,setMkRett]=useState(()=>{ const t=todayISO(); if(parseInt(t.slice(8,10),10)>10) return t.slice(0,7);
+    const [y,m]=t.slice(0,7).split('-').map(Number); const py=m===1?y-1:y, pm=m===1?12:m-1; return py+'-'+String(pm).padStart(2,'0'); }); // nei primi 10 giorni propone il mese precedente
   const [rettCode,setRettCode]=useState(()=>contoByCode[CONTO_RETTIFICA_DEFAULT]?CONTO_RETTIFICA_DEFAULT:'');
   const [descrRett,setDescrRett]=useState('Rettifiche spese cassa');
   const [catRett,setCatRett]=useState('');
