@@ -9569,7 +9569,8 @@ function PageInvestimenti({scritture, authUser, toast}){
       const de=(s.descr||'').toUpperCase();
       const cand=posList.filter(p=>Number(p.conto)===r.c);
       let p=cand.find(x=>x.chiave && String(x.chiave).split('|').some(k=>k.trim() && de.includes(k.trim().toUpperCase())));
-      if(!p) p=cand.find(x=>!x.chiave);
+      // un prodotto senza parola chiave prende il resto del conto, ma non lo storico già compreso nei costi di carico
+      if(!p && !(cutoff[r.c] && (s.data||'')<=cutoff[r.c])) p=cand.find(x=>!x.chiave);
       const m={data:s.data,descr:s.descr,imp};
       if(p){
         if(hasCosto(p) && (s.data||'')<=p.dataCosto){ m.inCosto=true; perPos[p.id].inCosto=r2(perPos[p.id].inCosto+imp); }
