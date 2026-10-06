@@ -9699,11 +9699,8 @@ function PageInvestimenti({scritture, authUser, toast}){
     if(!window.confirm('Togliere questo dispositivo dallo sblocco biometrico?')) return;
     await db.ref('investimenti/lock/creds/'+k).remove(); toast('Dispositivo rimosso','success');
   }
-  async function nuovo(){
-    const id='p'+Date.now().toString(36);
-    await db.ref('investimenti/posizioni/'+id).set({nome:'Nuovo investimento',tipo:'Fondo',conto:contiFin[0]?contiFin[0].codice:11,chiave:'',ordine:posList.length+1,creato:todayISO()});
-    setDet(id);
-  }
+  // apre una scheda vuota: non salva niente finché non si preme Salva
+  function nuovo(){ setDet('__nuovo'); }
 
   const pinInput = (val,set,ph,onEnter) => (
     <input type="password" inputMode="numeric" autoComplete="off" maxLength={8} value={val} placeholder={ph}
@@ -9752,7 +9749,9 @@ function PageInvestimenti({scritture, authUser, toast}){
   const creds=Object.entries((lock&&lock.creds)||{}).filter(([,c])=>c&&c.id);
   const pe=righe.filter(x=>x.tipo==='Private equity');
   const pct=x=>x==null?'':(x>0?'+':'')+x.toFixed(1).replace('.',',')+'%';
-  const detRow=det?righe.find(x=>x.id===det):null;
+  const detRow=det==='__nuovo'
+    ? {id:'__nuovo', nuovo:true, nome:'', tipo:'Fondo', gruppo:'', conto:'', chiave:'', vals:[], mov:[], versato:0, valore:0, pl:null, ordine:righe.length+1}
+    : (det?righe.find(x=>x.id===det):null);
   const compo=[...righe.map(x=>({nome:x.nome,v:Math.max(0,x.valore)})),...na.map(x=>({nome:(contoByCode[x.conto]?.nome||'#'+x.conto)+' (non attr.)',v:Math.max(0,x.versato)}))].filter(c=>c.v>0.005).sort((a,b)=>b.v-a.v);
 
   return (
@@ -9761,7 +9760,7 @@ function PageInvestimenti({scritture, authUser, toast}){
         <button className="btn ghost sm" onClick={()=>aggiornaPrezzi(true)}>↻ Prezzi</button>
         <button className="btn ghost sm" onClick={()=>setSicurezza(x=>!x)}>⚙ Sicurezza</button>
         <button className="btn ghost sm" onClick={blocca}>🔒 Blocca</button>
-        <button className="btn accent sm" onClick={nuovo}>+ Investimento</button>
+        <button className="btn accent sm" onClick={nuovo}>+ Aggiungi prodotto</button>
       </PageHead>
 
       {sicurezza && <div className="card" style={{marginBottom:16}}>
@@ -9884,14 +9883,20 @@ function InvDettaglio({x, contiFin, onClose, toast}){
   const [f,setF]=useState({isin:x.isin||'',quote:x.quote??'',dataQuote:x.dataQuote||'',codiceBI:x.codiceBI||'',costoCarico:x.costoCarico??'',dataCosto:x.dataCosto||'',gruppo:x.gruppo||'Altri',nome:x.nome||'',tipo:x.tipo||'Altro',conto:String(x.conto||''),chiave:x.chiave||'',impegno:x.impegno??'',
     prossimoData:x.prossimoData||'',prossimoImporto:x.prossimoImporto??'',note:x.note||''});
   const [nv,setNv]=useState({data:todayISO(),valore:''});
-  const ref=db.ref('investimenti/posizioni/'+x.id);
+  const ref=x.nuovo ? null : db.ref('investimenti/posizioni/'+x.id);
   const set=(k,v)=>setF(o=>({...o,[k]:v}));
   async function salva(){
     const n=parseFloat(String(f.impegno).replace(',','.')), pi=parseFloat(String(f.prossimoImporto).replace(',','.'));
     const cc=parseFloat(String(f.costoCarico).replace(/\./g,'').replace(',','.'));
     const q=parseFloat(String(f.quote).replace(',','.'));
-    await ref.update({isin:(f.isin||'').trim().toUpperCase()||null, quote:isNaN(q)?null:q, dataQuote:isNaN(q)?null:(f.dataQuote||todayISO()), codiceBI:(f.codiceBI||'').trim()||null, costoCarico:isNaN(cc)?null:cc, dataCosto:isNaN(cc)?null:(f.dataCosto||todayISO()), gruppo:(f.gruppo||'').trim()||'Altri',nome:(f.nome||'').trim()||'Investimento',tipo:f.tipo,conto:parseInt(f.conto)||null,chiave:(f.chiave||'').trim(),
-      impegno:isNaN(n)?null:n, prossimoData:f.prossimoData||null, prossimoImporto:isNaN(pi)?null:pi, note:f.note||''});
+    if(!(f.nome||'').trim()){ toast('Scrivi il nome del prodotto (es. Azimut PAC Bilanciato)','error'); return; }
+    const dati={isin:(f.isin||'').trim().toUpperCase()||null, quote:isNaN(q)?null:q, dataQuote:isNaN(q)?null:(f.dataQuote||todayISO()), codiceBI:(f.codiceBI||'').trim()||null, costoCarico:isNaN(cc)?null:cc, dataCosto:isNaN(cc)?null:(f.dataCosto||todayISO()), gruppo:(f.gruppo||'').trim()||'Altri',nome:(f.nome||'').trim()||'Investimento',tipo:f.tipo,conto:parseInt(f.conto)||null,chiave:(f.chiave||'').trim(),
+      impegno:isNaN(n)?null:n, prossimoData:f.prossimoData||null, prossimoImporto:isNaN(pi)?null:pi, note:f.note||''};
+    if(x.nuovo){
+      await db.ref('investimenti/posizioni/p'+Date.now().toString(36)).set({...dati, ordine:x.ordine, creato:todayISO()});
+      toast('Prodotto aggiunto','success'); onClose(); return;
+    }
+    await ref.update(dati);
     toast('Investimento salvato','success');
   }
   async function nuovoConto(){
@@ -9918,7 +9923,7 @@ function InvDettaglio({x, contiFin, onClose, toast}){
   return (
     <div className="modal-bg" onClick={e=>{if(e.target.className==='modal-bg')onClose();}}>
       <div className="modal" style={{maxWidth:640}}>
-        <div className="modal-head"><h3>{x.nome}</h3><button className="btn ghost sm" onClick={onClose}>✕</button></div>
+        <div className="modal-head"><h3>{x.nuovo?'Aggiungi prodotto':x.nome}</h3><button className="btn ghost sm" onClick={onClose}>✕</button></div>
         <div className="modal-body" style={{paddingTop:0}}>
           <div style={{display:'flex',gap:14,flexWrap:'wrap',fontSize:13,margin:'4px 0 14px'}}>
             <span>Versato <b>{eur(x.versato)}</b></span>
@@ -9957,9 +9962,10 @@ function InvDettaglio({x, contiFin, onClose, toast}){
           <div style={{display:'flex',gap:8,marginTop:12}}>
             <button className="btn accent" onClick={salva}>Salva</button>
             <div style={{flex:1}}></div>
-            <button className="btn danger sm" onClick={elimina}>Elimina</button>
+            {!x.nuovo && <button className="btn danger sm" onClick={elimina}>Elimina</button>}
           </div>
 
+          {x.nuovo ? <div style={{fontSize:12.5,color:'var(--ink-3)',marginTop:16}}>Dopo il salvataggio potrai inserire i valori di mercato e vedere grafico e movimenti.</div> : <>
           {x.serie && x.serie.length>1 && <>
             <div className="card-title" style={{marginTop:20}}>Andamento</div>
             <InvChart config={invLineConfig(x.serie,true)} height={200}/>
@@ -9990,6 +9996,7 @@ function InvDettaglio({x, contiFin, onClose, toast}){
               {x.mov.map((m,i)=>(<tr key={i} style={m.inCosto?{color:'var(--ink-3)'}:null}><td style={{whiteSpace:'nowrap'}}>{fmtDate(m.data)}</td><td>{m.descr}{m.inCosto && <span style={{fontSize:11,marginLeft:6}}>(già nel costo di carico)</span>}</td><td className={'num '+(m.imp<0?'neg':'')}>{num2(m.imp)}</td></tr>))}
             </tbody>
           </table></div>
+          </>}
         </div>
       </div>
     </div>
