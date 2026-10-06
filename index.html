@@ -9437,7 +9437,7 @@ function PageSchemaBilancio({ scritture: scrittureTutte, conti, categorie, toast
    ============================================================ */
 const INV_LOCK_MIN = 5;            // minuti di inattività prima di ribloccare
 let invUnlockedUntil = 0;          // in memoria: a ogni ricarica dell'app la sezione torna bloccata
-const INV_TIPI = ['Fondo','ETF','Azioni','Obbligazioni','Private equity','Polizza','Conto deposito','Altro'];
+const INV_TIPI = ['Fondo','PAC','ETF','Azioni','Obbligazioni','Private equity','Fondo pensione / TFR','Polizza','Conto deposito','Altro'];
 const INV_DEFAULT = [
   {nome:'Arca TE', tipo:'Fondo', gruppo:'Fondi BPER', conto:11, chiave:'ARCA TE', ordine:1},
   {nome:'Arca Az America Clima', tipo:'Fondo', gruppo:'Fondi BPER', conto:11, chiave:'AZ AMER', ordine:2},
@@ -9469,7 +9469,10 @@ async function invPrezzoBI(codice){
 }
 const invGruppo = p => (p && p.gruppo) || (Number(p&&p.conto)===77?'Fondi Azimut':(Number(p&&p.conto)===11?'Fondi BPER':'Altri'));
 const INV_COL = ['#1f4f8f','#2f7d4f','#b7791f','#7b4fa0','#c0433f','#2a8b9c','#6b7280','#a3542c','#4c7cc4','#8fae3d'];
-const invLbl = d => d ? d.slice(5,7)+'/'+d.slice(2,4) : '';
+const INV_MESI=['gen','feb','mar','apr','mag','giu','lug','ago','set','ott','nov','dic'];
+const invLbl = d => { if(!d) return ''; const [y,m,g]=d.split('-').map(Number);
+  const fineMese=new Date(Date.UTC(y,m,0)).getUTCDate()===g;
+  return fineMese ? INV_MESI[m-1]+' '+String(y).slice(2) : g+' '+INV_MESI[m-1]; };
 /* date del grafico: fine di ogni mese dal primo movimento a oggi + le date dei valori inseriti */
 function invDates(movs, vals){
   const oggi=todayISO(); const ds=new Set();
@@ -9485,13 +9488,14 @@ function invDates(movs, vals){
   return [...ds].sort();
 }
 /* per ogni data: versato cumulato e valore (ultimo valore inserito + versamenti successivi, altrimenti il versato) */
-function invSerie(movs, vals, dates){
+function invSerie(movs, vals, dates, cut){
   const mv=[...movs].sort((a,b)=>(a.data||'').localeCompare(b.data||''));
   const vv=[...vals].sort((a,b)=>a.data.localeCompare(b.data));
   return dates.map(d=>{
     const vers=r2(mv.filter(m=>m.data<=d).reduce((s,m)=>s+m.imp,0));
     const lv=vv.filter(v=>v.data<=d).pop();
-    const val=lv ? r2((Number(lv.valore)||0)+mv.filter(m=>m.data>lv.data&&m.data<=d).reduce((s,m)=>s+m.imp,0)) : vers;
+    // dopo l'ultimo valore inserito si aggiungono solo i versamenti veri successivi (non l'allineamento al costo di carico)
+    const val=lv ? r2((Number(lv.valore)||0)+mv.filter(m=>!m.adj&&m.data>lv.data&&(!cut||m.data>cut)&&m.data<=d).reduce((s,m)=>s+m.imp,0)) : vers;
     return {d,vers,val};
   });
 }
@@ -9583,17 +9587,20 @@ function PageInvestimenti({scritture, authUser, toast}){
       const pl=ult?r2(valore-versato):null;
       // per il grafico: storico contabile + allineamento al costo di carico alla sua data
       const movSerie=[...perPos[p.id].mov.map(m=>({data:m.data,imp:m.imp}))];
-      if(hasCosto(p)) movSerie.push({data:p.dataCosto, imp:r2(Number(p.costoCarico)-perPos[p.id].inCosto)});
-      return {...p, gruppo:invGruppo(p), conCosto:hasCosto(p), movSerie, versato, mov:perPos[p.id].mov.sort((a,b)=>(b.data||'').localeCompare(a.data||'')), vals, ult, valore,
+      // l'allineamento al costo di carico avviene alla data del costo o, se prima, al primo valore inserito
+      const adjD=hasCosto(p) ? ((vals.length && vals[0].data<p.dataCosto) ? vals[0].data : p.dataCosto) : null;
+      if(adjD) movSerie.push({data:adjD, imp:r2(Number(p.costoCarico)-perPos[p.id].inCosto), adj:true});
+      return {...p, gruppo:invGruppo(p), conCosto:hasCosto(p), adjD, movSerie, versato, mov:perPos[p.id].mov.sort((a,b)=>(b.data||'').localeCompare(a.data||'')), vals, ult, valore,
         pl, plPct:(ult&&Math.abs(versato)>0.005)?pl/versato*100:null};
     });
     const na=Object.entries(nonAttr).map(([c,x])=>({conto:Number(c),gruppo:invGruppo({conto:Number(c)}),...x}));
     // serie per i grafici
-    const inclList=Object.entries(incl).map(([c,mm])=>({conto:Number(c),mov:[...mm,{data:cutoff[c],imp:-r2(mm.reduce((t,m)=>t+m.imp,0))}]}));
+    const adjCut={}; righe.forEach(x=>{ if(x.adjD){ const c=Number(x.conto); if(!adjCut[c]||x.adjD<adjCut[c]) adjCut[c]=x.adjD; } });
+    const inclList=Object.entries(incl).map(([c,mm])=>({conto:Number(c),mov:[...mm.filter(m=>m.data<(adjCut[c]||cutoff[c])),{data:adjCut[c]||cutoff[c],imp:-r2(mm.filter(m=>m.data<(adjCut[c]||cutoff[c])).reduce((t,m)=>t+m.imp,0))}]}));
     const dates=invDates([...righe.flatMap(x=>x.movSerie),...na.flatMap(x=>x.mov),...inclList.flatMap(x=>x.mov)], righe.flatMap(x=>x.vals));
     const serieTot=dates.map(d=>({d,vers:0,val:0}));
     const somma=arr=>arr.forEach((p,i)=>{ serieTot[i].vers=r2(serieTot[i].vers+p.vers); serieTot[i].val=r2(serieTot[i].val+p.val); });
-    righe.forEach(x=>{ x.serie=invSerie(x.movSerie,x.vals,dates); somma(x.serie); });
+    righe.forEach(x=>{ x.serie=invSerie(x.movSerie,x.vals,dates,x.conCosto?x.dataCosto:null); somma(x.serie); });
     na.forEach(x=>somma(invSerie(x.mov,[],dates)));
     inclList.forEach(x=>somma(invSerie(x.mov,[],dates)));
     // confronto con la contabilità: saldo dei conti titoli usati nel gruppo
@@ -9887,6 +9894,15 @@ function InvDettaglio({x, contiFin, onClose, toast}){
       impegno:isNaN(n)?null:n, prossimoData:f.prossimoData||null, prossimoImporto:isNaN(pi)?null:pi, note:f.note||''});
     toast('Investimento salvato','success');
   }
+  async function nuovoConto(){
+    const nome=(window.prompt('Nome del nuovo conto titoli (es. TITOLI DIRECTA, FONDO PENSIONE):','TITOLI ')||'').trim().toUpperCase();
+    if(!nome) return;
+    if(CONTI.some(c=>String(c.nome).toUpperCase()===nome)){ toast('Esiste già un conto con questo nome','error'); return; }
+    const codice=CONTI.reduce((m,c)=>Math.max(m,c.codice||0),0)+1;
+    const nuovo={codice,nome,categoria:'IMM. FINANZIARIE',eccedenza:'DARE',prospetto:'SP'};
+    await db.ref('conti').set([...CONTI.map(c=>({...c})),nuovo].sort((a,b)=>a.codice-b.codice));
+    set('conto',String(codice)); toast(`Conto ${codice} · ${nome} creato nel piano dei conti`,'success');
+  }
   async function aggiungiValore(){
     const v=parseFloat(String(nv.valore).replace(/\./g,'').replace(',','.'));
     if(!nv.data||isNaN(v)){ toast('Inserisci data e valore','error'); return; }
@@ -9913,10 +9929,15 @@ function InvDettaglio({x, contiFin, onClose, toast}){
 
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))',gap:10}}>
             <div><label style={lbl}>Nome</label><input type="text" value={f.nome} onChange={e=>set('nome',e.target.value)}/></div>
-            <div><label style={lbl}>Gruppo</label><input type="text" list="inv-gruppi" value={f.gruppo} onChange={e=>set('gruppo',e.target.value)}/>
+            <div><label style={lbl}>Gruppo</label><input type="text" list="inv-gruppi" value={f.gruppo} onChange={e=>set('gruppo',e.target.value)} placeholder="es. Fondi Azimut, Directa…"/>
               <datalist id="inv-gruppi">{INV_GRUPPI.map(g=><option key={g} value={g}/>)}</datalist></div>
             <div><label style={lbl}>Tipo</label><select value={f.tipo} onChange={e=>set('tipo',e.target.value)}>{INV_TIPI.map(t=><option key={t}>{t}</option>)}</select></div>
-            <div><label style={lbl}>Conto in contabilità</label><select value={f.conto} onChange={e=>set('conto',e.target.value)}>{contiFin.map(c=><option key={c.codice} value={c.codice}>{c.codice} · {c.nome}</option>)}</select></div>
+            <div><label style={lbl} title="Il conto titoli del libro giornale da cui leggere i versamenti">Conto in contabilità</label>
+              <select value={f.conto} onChange={e=>{ if(e.target.value==='__nuovo') nuovoConto(); else set('conto',e.target.value); }}>
+                <option value="">— nessuno: versato e valori a mano —</option>
+                {contiFin.map(c=><option key={c.codice} value={c.codice}>{c.codice} · {c.nome}</option>)}
+                <option value="__nuovo">+ Nuovo conto titoli…</option>
+              </select></div>
             <div><label style={lbl} title="Parole nella descrizione delle scritture, separate da |. Vuoto = prende tutto il resto del conto">Parola chiave</label>
               <input type="text" value={f.chiave} onChange={e=>set('chiave',e.target.value)} placeholder="es. ARCA TE (vuoto = resto del conto)"/></div>
             <div><label style={lbl} title="Dall'estratto titoli: sostituisce lo storico della contabilità fino alla data indicata; i versamenti successivi si aggiungono">Costo di carico € (da estratto)</label>
