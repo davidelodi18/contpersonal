@@ -1502,42 +1502,84 @@ function PageHead({title,sub,children}){
    PAGINA: DASHBOARD
    ============================================================ */
 function DrillCassa({cod, scritture, onClose}){
-  const c=contoByCode[cod];
+  const c=contoByCode[cod]||{nome:'#'+cod};
+  const [mese,setMese]=useState('');           // '' = tutto l'anno, altrimenti 'AAAA-MM'
+  const [vista,setVista]=useState('movimenti'); // movimenti | riepilogo
   const lines=[];
-  (scritture||[]).forEach(s=> s.righe.forEach(r=>{ if(r.c===cod) lines.push({id:s.id,data:s.data,descr:s.descr,d:r.d||0,a:r.a||0,tipo:s.tipo}); }));
+  (scritture||[]).forEach(s=> (s.righe||[]).forEach(r=>{ if(r.c!==cod) return;
+    const altre=(s.righe||[]).filter(x=>x.c!==cod).sort((a,b)=>((b.d||0)+(b.a||0))-((a.d||0)+(a.a||0)));
+    const contro=altre[0]?altre[0].c:null;
+    lines.push({id:s.id,data:s.data,descr:s.descr,d:r.d||0,a:r.a||0,tipo:s.tipo,contro,cat:catOf(s)||''});
+  }));
   lines.sort((a,b)=>(a.data||'').localeCompare(b.data||''));
   let run=0; lines.forEach(l=>{ run=r2(run+l.d-l.a); l.saldo=run; });
-  const view=[...lines].reverse();
-  const entrate=r2(lines.reduce((s,l)=>s+l.d,0)), uscite=r2(lines.reduce((s,l)=>s+l.a,0));
+  const mesi=[...new Set(lines.map(l=>(l.data||'').slice(0,7)).filter(Boolean))].sort().reverse();
+  const sel=mese?lines.filter(l=>(l.data||'').slice(0,7)===mese):lines;
+  const view=[...sel].reverse();
+  const entrate=r2(sel.reduce((s,l)=>s+l.d,0)), uscite=r2(sel.reduce((s,l)=>s+l.a,0));
+  const saldoFine=sel.length?sel[sel.length-1].saldo:run;
+  // riepilogo per categoria (uscite e entrate separate)
+  const perCat={};
+  sel.forEach(l=>{ const k=(l.tipo==='giroconto'?'Giroconti':(l.cat||(contoByCode[l.contro]?.nome)||'Altro')).trim();
+    perCat[k]=perCat[k]||{e:0,u:0,n:0}; perCat[k].e=r2(perCat[k].e+l.d); perCat[k].u=r2(perCat[k].u+l.a); perCat[k].n++; });
+  const cats=Object.entries(perCat).sort((x,y)=>(y[1].u+y[1].e)-(x[1].u+x[1].e));
+  const mLbl=mk=>{ if(!mk) return ''; const [y,m]=mk.split('-'); const n=MESI_ORD[parseInt(m,10)-1]||m; return n.charAt(0).toUpperCase()+n.slice(1)+' '+y; };
   return (
     <div className="modal-bg" onClick={e=>{if(e.target.className==='modal-bg')onClose();}}>
-      <div className="modal" style={{maxWidth:680}}>
+      <div className="modal" style={{maxWidth:720}}>
         <div className="modal-head">
           <h3>{c.nome} — movimenti</h3>
           <button className="btn ghost sm" onClick={onClose}>✕</button>
         </div>
         <div className="modal-body" style={{paddingTop:0}}>
-          <div style={{display:'flex',gap:18,margin:'4px 0 14px',fontSize:13,color:'var(--ink-2)'}}>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',margin:'4px 0 12px'}}>
+            <select value={mese} onChange={e=>setMese(e.target.value)} style={{width:'auto'}}>
+              <option value="">Tutto l'anno</option>
+              {mesi.map(m=><option key={m} value={m}>{mLbl(m)}</option>)}
+            </select>
+            <div className="tipo-switch" style={{gridTemplateColumns:'1fr 1fr',maxWidth:260,margin:0}}>
+              <button className={vista==='movimenti'?'active':''} onClick={()=>setVista('movimenti')}>Movimenti</button>
+              <button className={vista==='riepilogo'?'active':''} onClick={()=>setVista('riepilogo')}>Riepilogo</button>
+            </div>
+          </div>
+          <div style={{display:'flex',gap:14,flexWrap:'wrap',margin:'0 0 14px',fontSize:13,color:'var(--ink-2)'}}>
             <span>Entrate <b className="pos">{num2(entrate)}</b></span>
             <span>Uscite <b className="neg">{num2(uscite)}</b></span>
-            <span style={{marginLeft:'auto'}}>Saldo contabile <b>{eur(run)}</b></span>
+            <span>Netto <b className={entrate-uscite<0?'neg':'pos'}>{num2(r2(entrate-uscite))}</b></span>
+            <span style={{marginLeft:'auto'}}>Saldo {mese?'a fine mese':'contabile'} <b>{eur(saldoFine)}</b></span>
           </div>
-          <div className="tbl-wrap">
-            <table className="tbl">
-              <thead><tr><th style={{width:84}}>Data</th><th>Descrizione</th><th className="num">Importo</th><th className="num">Saldo</th></tr></thead>
-              <tbody>
-                {view.length===0 && <tr><td colSpan="4" className="empty-state">Nessun movimento</td></tr>}
-                {view.map((l,i)=>(
-                  <tr key={l.id+'_'+i}>
-                    <td style={{whiteSpace:'nowrap'}}>{fmtDate(l.data)}</td>
-                    <td>{l.descr}{l.tipo==='giroconto'&&<span className="pill giroconto" style={{marginLeft:6}}>giroconto</span>}</td>
-                    <td className={'num '+(l.d>0?'pos':'neg')}>{l.d>0?'+':'−'}{num2(l.d>0?l.d:l.a)}</td>
-                    <td className={'num '+(l.saldo<0?'neg':'')}>{num2(l.saldo)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {vista==='riepilogo' ? (
+            <div className="tbl-wrap">
+              <table className="tbl">
+                <thead><tr><th>Categoria</th><th className="num">N.</th><th className="num">Entrate</th><th className="num">Uscite</th></tr></thead>
+                <tbody>
+                  {cats.length===0 && <tr><td colSpan="4" className="empty-state">Nessun movimento</td></tr>}
+                  {cats.map(([k,v])=>(
+                    <tr key={k}><td>{k}</td><td className="num" style={{color:'var(--ink-3)'}}>{v.n}</td>
+                      <td className="num pos">{v.e?num2(v.e):''}</td><td className="num neg">{v.u?num2(v.u):''}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="tbl-wrap">
+              <table className="tbl">
+                <thead><tr><th style={{width:84}}>Data</th><th>Descrizione</th><th className="num">Importo</th><th className="num">Saldo</th></tr></thead>
+                <tbody>
+                  {view.length===0 && <tr><td colSpan="4" className="empty-state">Nessun movimento</td></tr>}
+                  {view.map((l,i)=>(
+                    <tr key={l.id+'_'+i}>
+                      <td style={{whiteSpace:'nowrap'}}>{fmtDate(l.data)}</td>
+                      <td>{l.descr}{l.tipo==='giroconto'&&<span className="pill giroconto" style={{marginLeft:6}}>giroconto</span>}
+                        <div style={{fontSize:11,color:'var(--ink-3)',marginTop:2}}>{l.contro!=null?(contoByCode[l.contro]?.nome||('#'+l.contro)):''}{l.cat&&l.tipo!=='giroconto'?' · '+l.cat:''}</div></td>
+                      <td className={'num '+(l.d>0?'pos':'neg')}>{l.d>0?'+':'−'}{num2(l.d>0?l.d:l.a)}</td>
+                      <td className={'num '+(l.saldo<0?'neg':'')}>{num2(l.saldo)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -3277,6 +3319,7 @@ function PageLiquidita({saldi, scritture, conti, setConti, saldiIni, setSaldiIni
   const [collega,setCollega]=useState('');
   const [edit,setEdit]=useState(null);           // {codice, nome, ini}
   const [scoll,setScoll]=useState(null);         // {codice, cat}
+  const [drill,setDrill]=useState(null);         // conto di cui mostrare i movimenti
   /* categorie di Stato Patrimoniale valide come destinazione dello scollega */
   const catSP = Array.from(new Set(list.filter(c=>c.prospetto==='SP' && c.categoria && c.categoria!=='DISP. LIQUIDE').map(c=>c.categoria))).sort();
 
@@ -3360,6 +3403,7 @@ function PageLiquidita({saldi, scritture, conti, setConti, saldiIni, setSaldiIni
   return (
     <div>
       <PageHead title="Conti Liquidità" sub="Conti che compongono le disponibilità: cassa, conti correnti, carte prepagate"/>
+      {drill!=null && <DrillCassa cod={drill} scritture={scritture} onClose={()=>setDrill(null)}/>}
 
       <div className="card" style={{marginBottom:18}}>
         <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:14,flexWrap:'wrap'}}>
@@ -3440,14 +3484,14 @@ function PageLiquidita({saldi, scritture, conti, setConti, saldiIni, setSaldiIni
                 <td>{inEdit
                   ? <input type="text" value={edit.nome} onChange={e=>setEdit(x=>({...x,nome:e.target.value}))}
                       onKeyDown={e=>{if(e.key==='Enter')salvaEdit(); if(e.key==='Escape')setEdit(null);}} style={{width:'100%'}} autoFocus/>
-                  : <b>{c.nome}</b>}</td>
+                  : <b onClick={()=>setDrill(c.codice)} style={{cursor:'pointer',textDecoration:'underline dotted'}} title="Vedi i movimenti">{c.nome}</b>}</td>
                 <td className="num">{inEdit
                   ? <input type="text" inputMode="decimal" value={edit.ini} onChange={e=>setEdit(x=>({...x,ini:e.target.value}))}
                       onKeyDown={e=>{if(e.key==='Enter')salvaEdit(); if(e.key==='Escape')setEdit(null);}} style={{width:100,textAlign:'right'}}/>
                   : <span className={c.ini<0?'neg':''}>{num2(c.ini)}</span>}</td>
                 <td className={'num '+(c.contabile<0?'neg':'')}>{num2(c.contabile)}</td>
                 <td className={'num '+(c.reale<0?'neg':'')} style={{fontWeight:600}}>{num2(c.reale)}</td>
-                <td className="num" style={{fontSize:12,color:'var(--ink-3)'}}>{c.mov}</td>
+                <td className="num" style={{fontSize:12,color:'var(--accent)',cursor:'pointer'}} onClick={()=>setDrill(c.codice)} title="Vedi i movimenti">{c.mov} →</td>
                 <td style={{textAlign:'center',whiteSpace:'nowrap'}}>
                   {inEdit ? <>
                     <button className="btn accent sm" onClick={salvaEdit}>Salva</button>
