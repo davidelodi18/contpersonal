@@ -9531,6 +9531,7 @@ function PageInvestimenti({scritture, authUser, toast}){
   const [det,setDet]=useState(null);             // id dell'investimento aperto nel dettaglio
   const [sicurezza,setSicurezza]=useState(false);
   const [prezziStato,setPrezziStato]=useState('');
+  const [rendMis,setRendMis]=useState('pct');     // classifica rendimenti: pct | eur
 
   useEffect(()=>{
     if(!firebaseReady){ setLock(null); setPos({}); return; }
@@ -9818,6 +9819,36 @@ function PageInvestimenti({scritture, authUser, toast}){
           </div>
         </div>
       </div>
+
+      {(()=>{ const rr=righe.filter(x=>x.pl!=null).map(x=>({nome:x.nome,pl:x.pl,pct:x.plPct||0,valore:x.valore,versato:x.versato}))
+          .sort((a,b)=>rendMis==='pct'?b.pct-a.pct:b.pl-a.pl);
+        if(!rr.length) return null;
+        const val=x=>rendMis==='pct'?Math.round(x.pct*100)/100:x.pl;
+        return (
+          <div className="card" style={{marginBottom:20}}>
+            <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',marginBottom:6}}>
+              <div className="card-title" style={{margin:0}}>Rendimento per titolo</div>
+              <div className="tipo-switch" style={{gridTemplateColumns:'1fr 1fr',maxWidth:150,margin:'0 0 0 auto'}}>
+                <button className={rendMis==='pct'?'active':''} onClick={()=>setRendMis('pct')}>%</button>
+                <button className={rendMis==='eur'?'active':''} onClick={()=>setRendMis('eur')}>€</button>
+              </div>
+            </div>
+            <InvChart height={Math.max(140,rr.length*42+40)} config={{type:'bar',
+              data:{labels:rr.map(x=>x.nome),datasets:[{label:rendMis==='pct'?'Rendimento %':'Plus/minus €',data:rr.map(val),
+                backgroundColor:rr.map(x=>x.pl>=0?'rgba(47,125,79,.85)':'rgba(192,67,63,.85)'),borderRadius:4,barThickness:22}]},
+              options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
+                tooltip:{callbacks:{label:c=>{ const x=rr[c.dataIndex]; return (x.pl>0?'+':'')+num2(x.pl)+' € · '+(x.pct>0?'+':'')+x.pct.toFixed(2).replace('.',',')+'% (valore '+eur(x.valore)+', versato '+eur(x.versato)+')'; }}}},
+                scales:{x:{ticks:{callback:v=>rendMis==='pct'?v+'%':invEurTick(v),font:{size:10}},grid:{color:'#eef2f8'}},y:{ticks:{font:{size:11}},grid:{display:false}}}}}}/>
+            <div className="tbl-wrap" style={{marginTop:10}}><table className="tbl">
+              <thead><tr><th>#</th><th>Titolo</th><th className="num">Versato</th><th className="num">Valore</th><th className="num">Plus/minus</th><th className="num">%</th></tr></thead>
+              <tbody>{rr.map((x,i)=>(
+                <tr key={x.nome}><td style={{color:'var(--ink-3)'}}>{i+1}</td><td>{x.nome}</td><td className="num">{num2(x.versato)}</td><td className="num">{num2(x.valore)}</td>
+                  <td className={'num '+(x.pl<0?'neg':'pos')}>{x.pl>0?'+':''}{num2(x.pl)}</td><td className={'num '+(x.pl<0?'neg':'pos')} style={{fontWeight:600}}>{x.pct>0?'+':''}{x.pct.toFixed(2).replace('.',',')}%</td></tr>
+              ))}</tbody>
+            </table></div>
+            <div style={{fontSize:11,color:'var(--ink-3)',marginTop:6}}>Rendimento semplice: (valore − versato) / versato, sui titoli con un valore di mercato.</div>
+          </div>
+        ); })()}
 
       {gruppi.map(g=>(
         <div key={g.nome} style={{marginBottom:22}}>
