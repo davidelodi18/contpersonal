@@ -4496,13 +4496,28 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
   }
   function eliminaVoce(id){ if(!window.confirm('Eliminare questa voce?')) return; upd({voci:(draft.voci||[]).filter(v=>v.id!==id)}); }
   function updVoce(id,patch){ upd({voci:(draft.voci||[]).map(v=>v.id===id?{...v,...patch}:v)}); }
+  /* ---- voce "verificata": si è realizzata davvero (come la contabilità futsal) ----
+     realizzato=true + importoEffettivo = importo confermato o corretto + dataRealizzo */
+  const isReal=v=>!!v&&v.realizzato===true;
+  const valEff=v=>{ const e=v.importoEffettivo; return (e===null||e===undefined||e===''||isNaN(parseFloat(e)))?(parseFloat(v.importo)||0):parseFloat(e); };
+  function toggleReal(v,on){
+    updVoce(v.id, on
+      ? {realizzato:true, importoEffettivo:(v.importoEffettivo!=null&&v.importoEffettivo!=='')?v.importoEffettivo:(parseFloat(v.importo)||0), dataRealizzo:todayISO()}
+      : {realizzato:false, importoEffettivo:null, dataRealizzo:null});
+  }
+  // importo che deve ancora muovere la cassa: per le voci verificate solo la parte non ancora registrata
+  const impCassa=v=>{
+    if(!isReal(v)) return parseFloat(v.importo)||0;
+    const cons=r2((v.conti||[]).reduce((s,c)=>s+movConto(scritture,c,v.natura,b&&b.da,b&&b.a),0));
+    return Math.max(0,r2(valEff(v)-cons));
+  };
   function saldoCassa(cod){ let s=0; (scritture||[]).forEach(x=>(x.righe||[]).forEach(r=>{ if(r.c===cod) s+=(r.d||0)-(r.a||0); })); return r2(s); }
   const cassaPlan = useMemo(()=>{
     if(!b) return [];
     const byCassa={};
     (b.voci||[]).forEach(v=>{
       if(v.cassa==null||v.cassa==='') return; const cod=parseInt(v.cassa); if(!LIQ_CODES.includes(cod)) return;
-      const imp=parseFloat(v.importo)||0; if(!imp) return;
+      const imp=impCassa(v); if(Math.abs(imp)<0.005) return;
       const seg = v.natura==='ricavo' ? imp : -imp;
       byCassa[cod]=byCassa[cod]||{entrate:0,uscite:0};
       if(seg>=0) byCassa[cod].entrate=r2(byCassa[cod].entrate+seg); else byCassa[cod].uscite=r2(byCassa[cod].uscite-seg);
@@ -4521,7 +4536,7 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
     let flussi=[];
     (b.voci||[]).forEach(v=>{
       if(v.cassa==null||v.cassa==='') return; const cod=parseInt(v.cassa); if(!LIQ_CODES.includes(cod)) return;
-      const imp=parseFloat(v.importo)||0; if(!imp) return;
+      const imp=impCassa(v); if(Math.abs(imp)<0.005) return;
       const seg=v.natura==='ricavo'?imp:-imp;
       flussi.push({cod,data:v.dataFlusso||'',descr:v.descr,seg,senzaData:!v.dataFlusso});
     });
@@ -4547,10 +4562,11 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
       const propri=(v.conti||[]).filter(c=>!usati.has(c));
       propri.forEach(c=>usati.add(c));
       const cons=r2(propri.reduce((s,c)=>s+movConto(scritture,c,v.natura,b.da,b.a),0));
-      const budg=sommaCons ? r2((parseFloat(v.importo)||0)+cons) : r2(parseFloat(v.importo)||0);
-      const atteso=r2(cons+(parseFloat(v.importo)||0));
+      const real=isReal(v), prev=r2(parseFloat(v.importo)||0), eff=r2(valEff(v));
+      const budg=real ? eff : (sommaCons ? r2(prev+cons) : prev);
+      const atteso=real ? eff : r2(cons+prev);
       const dupl=(v.conti||[]).length-propri.length;
-      return {...v, cons, budg, atteso, scost:r2(cons-budg), dupl};
+      return {...v, cons, budg, atteso, scost:r2(cons-budg), dupl, real, prev, eff, dPrev:r2(eff-prev)};
     });
     const somma=(nat,f)=>r2(righe.filter(r=>r.natura===nat).reduce((s,r)=>s+f(r),0));
     const tot={
@@ -4565,12 +4581,12 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
 
   function exportXls(){
     if(!window.XLSX){ toast('Libreria Excel non caricata','error'); return; }
-    const head=['Voce','Natura','Conti','Budget','Consuntivo','Scostamento','Tot. atteso','Cassa','Note'];
+    const head=['Voce','Natura','Conti','Budget','Consuntivo','Scostamento','Tot. atteso','Cassa','Note','Stato','Previsto','Effettivo'];
     const aoa=[[b.nome],[b.da||b.a?`Periodo ${b.da||'inizio'} → ${b.a||'oggi'}`:'Periodo: tutto'],[],head];
     NATURE.forEach(n=>{
       const rr=calc.righe.filter(r=>r.natura===n.v); if(!rr.length) return;
       aoa.push([n.l.toUpperCase()]);
-      rr.forEach(r=>aoa.push([r.descr,n.l,(r.conti||[]).map(c=>contoByCode[c]?.nome||c).join(', '),r.budg,r.cons,r.scost,r.atteso,r.cassa?contoByCode[parseInt(r.cassa)]?.nome:'',r.note||'']));
+      rr.forEach(r=>aoa.push([r.descr,n.l,(r.conti||[]).map(c=>contoByCode[c]?.nome||c).join(', '),r.budg,r.cons,r.scost,r.atteso,r.cassa?contoByCode[parseInt(r.cassa)]?.nome:'',r.note||'',r.real?'verificata':'prevista',r.prev,r.real?r.eff:'']));
     });
     aoa.push([]);
     aoa.push(['TOTALE RICAVI','','',calc.tot.ricBudg,calc.tot.ricCons,r2(calc.tot.ricCons-calc.tot.ricBudg),calc.tot.ricAtt,'','']);
@@ -4638,7 +4654,7 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
     toast('PDF generato','success');
   }
 
-  const nCol = mostraCons?7:4;
+  const nCol = mostraCons?8:5;
 
   /* ============ SCHERMATA INIZIALE: elenco budget ============ */
   if(!sel || !draft){
@@ -4783,10 +4799,17 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
         </div>}
       </div>}
 
+      {(()=>{ const rr=calc.righe; const vr=rr.filter(x=>x.real); if(!rr.length) return null;
+        const segno=x=>x.natura==='ricavo'?1:-1; const dTot=r2(vr.reduce((s,x)=>s+segno(x)*x.dPrev,0));
+        return <div className="card flat" style={{marginBottom:12,padding:'10px 14px',display:'flex',gap:16,flexWrap:'wrap',alignItems:'center',fontSize:13}}>
+          <span>Voci verificate <b>{vr.length}/{rr.length}</b></span>
+          {vr.length>0 && <span>Effetto sul risultato rispetto al previsto: <b className={dTot<-0.005?'neg':(dTot>0.005?'pos':'')}>{dTot>0?'+':''}{num2(dTot)} €</b></span>}
+          <span style={{color:'var(--ink-3)',fontSize:12}}>Spunta "Verificata?" quando una voce si realizza e conferma o correggi l'importo.</span>
+        </div>; })()}
       <div className="tbl-wrap">
         <table className="tbl">
           <thead><tr>
-            <th>Voce</th><th>Conti collegati</th><th className="num" style={{minWidth:100}}>{sommaCons?'Forecast':'Budget'} inserito</th>
+            <th>Voce</th><th>Conti collegati</th><th className="num" style={{minWidth:100}}>{sommaCons?'Forecast':'Budget'} inserito</th><th style={{minWidth:120}} title="Spunta quando la voce si è verificata: confermi l'importo previsto o lo correggi">Verificata?</th>
             {mostraCons && <th className="num">Consuntivo</th>}
             {mostraCons && <th className="num">Scostamento</th>}
             {mostraCons && <th className="num" title="Consuntivo + forecast inserito">Tot. atteso</th>}
@@ -4815,6 +4838,21 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
                             placeholder="0,00"
                             style={{width:'100%',minWidth:78,textAlign:'right',border:'1px solid var(--rule)',borderRadius:4,padding:'4px 6px',fontFamily:"'JetBrains Mono',ui-monospace,monospace",fontSize:12.5,background:'var(--panel)'}}/>
                         </td>
+                        <td style={{padding:'4px 6px',minWidth:120}}>
+                          <label style={{display:'flex',alignItems:'center',gap:5,fontSize:11.5,cursor:'pointer',whiteSpace:'nowrap'}}>
+                            <input type="checkbox" checked={r.real} onChange={e=>toggleReal(r,e.target.checked)} style={{width:'auto'}}/>
+                            <span style={{color:r.real?'var(--success)':'var(--ink-3)',fontWeight:r.real?700:400}}>{r.real?'verificata':'prevista'}</span>
+                          </label>
+                          {r.real && <div style={{display:'flex',alignItems:'center',gap:4,marginTop:4}}>
+                            <input type="number" min="0" step="0.01" value={r.importoEffettivo??''} title="Importo effettivo: conferma quello previsto o correggilo"
+                              onChange={e=>updVoce(r.id,{importoEffettivo:e.target.value.replace('-','')})}
+                              style={{width:84,textAlign:'right',fontSize:12,border:'1px solid var(--rule)',borderRadius:4,padding:'3px 5px',fontFamily:"'JetBrains Mono',ui-monospace,monospace"}}/>
+                            <button className="btn ghost sm" title="Riporta all'importo previsto" onClick={()=>updVoce(r.id,{importoEffettivo:r.prev})}>↺</button>
+                          </div>}
+                          {r.real && <div style={{fontSize:10.5,marginTop:3,color:Math.abs(r.dPrev)<0.005?'var(--ink-3)':(((r.natura==='ricavo')?r.dPrev>0:r.dPrev<0)?'var(--success)':'var(--danger)')}}>
+                            {Math.abs(r.dPrev)<0.005?'come previsto':`${r.dPrev>0?'+':''}${num2(r.dPrev)} vs previsto`}{r.dataRealizzo?' · '+fmtDate(r.dataRealizzo):''}
+                          </div>}
+                        </td>
                         {mostraCons && <td className="num" title="Da libro giornale">{num2(r.cons)}</td>}
                         {mostraCons && <td className={'num '+(favorevole?'pos':'neg')}>{r.scost>0?'+':''}{num2(r.scost)}</td>}
                         {mostraCons && <td className="num" style={{fontWeight:600}}>{num2(r.atteso)}</td>}
@@ -4834,7 +4872,7 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
                     );
                   })}
                   <tr className="rf-tot"><td colSpan={2} style={{fontWeight:600}}>Totale {n.l.toLowerCase()}</td>
-                    <td className="num" style={{fontWeight:600}}>{num2(tb)}</td>
+                    <td className="num" style={{fontWeight:600}}>{num2(tb)}</td><td style={{fontSize:11,color:'var(--ink-3)'}}>{rr.filter(x=>x.real).length}/{rr.length} verif.</td>
                     {mostraCons && <td className="num" style={{fontWeight:600}}>{num2(tc)}</td>}
                     {mostraCons && <td className="num" style={{fontWeight:600}}>{num2(r2(tc-tb))}</td>}
                     {mostraCons && <td className="num" style={{fontWeight:600}}>{num2(ta)}</td>}
@@ -4843,7 +4881,7 @@ function PageBudget({scritture, budgets, setBudgets, toast}){
               );
             })}
             <tr className="rf-tot strong"><td colSpan={2} style={{fontWeight:700}}>RISULTATO (ricavi − costi)</td>
-              <td className="num" style={{fontWeight:700}}>{num2(calc.tot.resBudg)}</td>
+              <td className="num" style={{fontWeight:700}}>{num2(calc.tot.resBudg)}</td><td></td>
               {mostraCons && <td className="num" style={{fontWeight:700}}>{num2(calc.tot.resCons)}</td>}
               {mostraCons && <td className={'num '+(calc.tot.scost<0?'neg':'pos')} style={{fontWeight:700}}>{calc.tot.scost>0?'+':''}{num2(calc.tot.scost)}</td>}
               {mostraCons && <td className="num" style={{fontWeight:700}}>{num2(calc.tot.resAtt)}</td>}
