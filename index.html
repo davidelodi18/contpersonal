@@ -9874,12 +9874,12 @@ function PageInvestimenti({scritture, authUser, toast}){
         <div style={{fontSize:11.5,color:'var(--ink-3)'}}>Impegno e prossimo richiamo si impostano dal dettaglio dell'investimento.</div>
       </div>}
 
-      {detRow && <InvDettaglio x={detRow} contiFin={contiFin} onClose={()=>setDet(null)} toast={toast}/>}
+      {detRow && <InvDettaglio x={detRow} contiFin={contiFin} gruppiEsistenti={gruppi.map(g=>g.nome)} onClose={()=>setDet(null)} toast={toast}/>}
     </div>
   );
 }
 
-function InvDettaglio({x, contiFin, onClose, toast}){
+function InvDettaglio({x, contiFin, gruppiEsistenti, onClose, toast}){
   const [f,setF]=useState({isin:x.isin||'',quote:x.quote??'',dataQuote:x.dataQuote||'',codiceBI:x.codiceBI||'',costoCarico:x.costoCarico??'',dataCosto:x.dataCosto||'',gruppo:x.gruppo||'Altri',nome:x.nome||'',tipo:x.tipo||'Altro',conto:String(x.conto||''),chiave:x.chiave||'',impegno:x.impegno??'',
     prossimoData:x.prossimoData||'',prossimoImporto:x.prossimoImporto??'',note:x.note||''});
   const [nv,setNv]=useState({data:todayISO(),valore:''});
@@ -9934,8 +9934,14 @@ function InvDettaglio({x, contiFin, onClose, toast}){
 
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))',gap:10}}>
             <div><label style={lbl}>Nome</label><input type="text" value={f.nome} onChange={e=>set('nome',e.target.value)}/></div>
-            <div><label style={lbl}>Gruppo</label><input type="text" list="inv-gruppi" value={f.gruppo} onChange={e=>set('gruppo',e.target.value)} placeholder="es. Fondi Azimut, Directa…"/>
-              <datalist id="inv-gruppi">{INV_GRUPPI.map(g=><option key={g} value={g}/>)}</datalist></div>
+            <div><label style={lbl} title="La sezione in cui compare: di solito il provider (BPER, Azimut…)">Gruppo / provider</label>
+              <select value={f.gruppo} onChange={e=>{
+                  if(e.target.value==='__nuovo'){ const g=(window.prompt('Nome del nuovo gruppo (es. Directa, Fineco, Fondo pensione):','')||'').trim(); if(g) set('gruppo',g); }
+                  else set('gruppo',e.target.value); }}>
+                <option value="">— scegli —</option>
+                {[...new Set([...INV_GRUPPI,...(gruppiEsistenti||[]),...(f.gruppo?[f.gruppo]:[])])].map(g=><option key={g} value={g}>{g}</option>)}
+                <option value="__nuovo">+ Nuovo gruppo…</option>
+              </select></div>
             <div><label style={lbl}>Tipo</label><select value={f.tipo} onChange={e=>set('tipo',e.target.value)}>{INV_TIPI.map(t=><option key={t}>{t}</option>)}</select></div>
             <div><label style={lbl} title="Il conto titoli del libro giornale da cui leggere i versamenti">Conto in contabilità</label>
               <select value={f.conto} onChange={e=>{ if(e.target.value==='__nuovo') nuovoConto(); else set('conto',e.target.value); }}>
