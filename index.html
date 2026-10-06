@@ -9427,6 +9427,391 @@ function PageSchemaBilancio({ scritture: scrittureTutte, conti, categorie, toast
 }
 
 
+/* ============================================================
+   INVESTIMENTI — sezione protetta da PIN e Face ID / Touch ID
+   Dati su Firebase: investimenti/lock (PIN con hash + dispositivi
+   biometrici) e investimenti/posizioni (un nodo per investimento).
+   Il versato si calcola dal libro giornale sui conti delle
+   immobilizzazioni finanziarie; il valore di mercato si inserisce a mano.
+   NB: è un blocco di riservatezza dell'interfaccia, non una cifratura dei dati.
+   ============================================================ */
+const INV_LOCK_MIN = 5;            // minuti di inattività prima di ribloccare
+let invUnlockedUntil = 0;          // in memoria: a ogni ricarica dell'app la sezione torna bloccata
+const INV_TIPI = ['Fondo','ETF','Azioni','Obbligazioni','Private equity','Polizza','Conto deposito','Altro'];
+const INV_DEFAULT = [
+  {nome:'Arca TE', tipo:'Fondo', conto:11, chiave:'ARCA TE', ordine:1},
+  {nome:'Arca Az America Clima', tipo:'Fondo', conto:11, chiave:'AZ AMER', ordine:2},
+  {nome:'Altri titoli BPER', tipo:'Altro', conto:11, chiave:'', ordine:3},
+  {nome:'Azimut Private Equity', tipo:'Private equity', conto:77, chiave:'', ordine:4},
+];
+const invB64u = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+const invUnb64u = s => { s=String(s).replace(/-/g,'+').replace(/_/g,'/'); while(s.length%4) s+='='; const bin=atob(s); const u=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) u[i]=bin.charCodeAt(i); return u.buffer; };
+const invRnd = n => crypto.getRandomValues(new Uint8Array(n));
+async function invHash(pin, salt){
+  const d=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(salt+'|'+pin));
+  return Array.from(new Uint8Array(d)).map(x=>x.toString(16).padStart(2,'0')).join('');
+}
+const invBioOk = () => !!(window.PublicKeyCredential && navigator.credentials && window.isSecureContext);
+const invDevice = () => { const u=navigator.userAgent||''; return /iPhone/.test(u)?'iPhone':/iPad/.test(u)?'iPad':/Macintosh|Mac OS/.test(u)?'Mac':/Android/.test(u)?'Android':'Dispositivo'; };
+const invKey = id => String(id).replace(/[.#$\[\]\/]/g,'_');
+
+function PageInvestimenti({scritture, authUser, toast}){
+  const [lock,setLock]=useState(undefined);      // undefined = caricamento · null = non ancora configurato
+  const [pos,setPos]=useState(null);
+  const [aperto,setAperto]=useState(()=>Date.now()<invUnlockedUntil);
+  const [pin,setPin]=useState(''); const [pin2,setPin2]=useState('');
+  const [busy,setBusy]=useState(false);
+  const [det,setDet]=useState(null);             // id dell'investimento aperto nel dettaglio
+  const [sicurezza,setSicurezza]=useState(false);
+
+  useEffect(()=>{
+    if(!firebaseReady){ setLock(null); setPos({}); return; }
+    const rl=db.ref('investimenti/lock'), rp=db.ref('investimenti/posizioni');
+    const h1=rl.on('value',s=>setLock(s.val()||null));
+    const h2=rp.on('value',s=>setPos(s.val()||{}));
+    return ()=>{ rl.off('value',h1); rp.off('value',h2); };
+  },[]);
+
+  // finché la pagina si usa lo sblocco si rinnova; dopo INV_LOCK_MIN minuti di inattività si riblocca
+  useEffect(()=>{
+    if(!aperto) return;
+    const bump=()=>{ invUnlockedUntil=Date.now()+INV_LOCK_MIN*60000; };
+    bump();
+    const ev=['click','keydown','touchstart','scroll'];
+    ev.forEach(e=>window.addEventListener(e,bump,{passive:true}));
+    const t=setInterval(()=>{ if(Date.now()>invUnlockedUntil) setAperto(false); },15000);
+    return ()=>{ ev.forEach(e=>window.removeEventListener(e,bump)); clearInterval(t); };
+  },[aperto]);
+
+  const contiFin = CONTI.filter(c=>c.categoria==='IMM. FINANZIARIE');
+  const posList = useMemo(()=>Object.entries(pos||{}).filter(([,p])=>p).map(([id,p])=>({id,...p}))
+    .sort((a,b)=>((a.ordine??99)-(b.ordine??99))||(a.nome||'').localeCompare(b.nome||'')),[pos]);
+
+  const calc = useMemo(()=>{
+    const perPos={}; posList.forEach(p=>{ perPos[p.id]={versato:0,mov:[]}; });
+    const nonAttr={};
+    const codFin=new Set(contiFin.map(c=>c.codice));
+    (scritture||[]).forEach(s=>(s.righe||[]).forEach(r=>{
+      if(!codFin.has(r.c)) return;
+      const imp=r2((r.d||0)-(r.a||0)); if(Math.abs(imp)<0.005) return;
+      const de=(s.descr||'').toUpperCase();
+      const cand=posList.filter(p=>Number(p.conto)===r.c);
+      let p=cand.find(x=>x.chiave && String(x.chiave).split('|').some(k=>k.trim() && de.includes(k.trim().toUpperCase())));
+      if(!p) p=cand.find(x=>!x.chiave);
+      const m={data:s.data,descr:s.descr,imp};
+      if(p){ perPos[p.id].versato=r2(perPos[p.id].versato+imp); perPos[p.id].mov.push(m); }
+      else { nonAttr[r.c]=nonAttr[r.c]||{versato:0,mov:[]}; nonAttr[r.c].versato=r2(nonAttr[r.c].versato+imp); nonAttr[r.c].mov.push(m); }
+    }));
+    const righe=posList.map(p=>{
+      const vals=Object.entries(p.valori||{}).filter(([,x])=>x&&x.data).map(([vid,x])=>({vid,...x})).sort((a,b)=>a.data.localeCompare(b.data));
+      const ult=vals.length?vals[vals.length-1]:null;
+      const versato=perPos[p.id].versato;
+      const valore=ult?(Number(ult.valore)||0):versato;
+      const pl=ult?r2(valore-versato):null;
+      return {...p, versato, mov:perPos[p.id].mov.sort((a,b)=>(b.data||'').localeCompare(a.data||'')), vals, ult, valore,
+        pl, plPct:(ult&&Math.abs(versato)>0.005)?pl/versato*100:null};
+    });
+    const na=Object.entries(nonAttr).map(([c,x])=>({conto:Number(c),...x}));
+    const tot={versato:r2(righe.reduce((s,x)=>s+x.versato,0)+na.reduce((s,x)=>s+x.versato,0))};
+    tot.valore=r2(righe.reduce((s,x)=>s+x.valore,0)+na.reduce((s,x)=>s+x.versato,0));
+    tot.pl=r2(tot.valore-tot.versato);
+    tot.plPct=Math.abs(tot.versato)>0.005?tot.pl/tot.versato*100:null;
+    const pe=righe.filter(x=>x.tipo==='Private equity');
+    tot.impegno=r2(pe.reduce((s,x)=>s+(Number(x.impegno)||0),0));
+    tot.residuo=r2(pe.reduce((s,x)=>s+Math.max(0,(Number(x.impegno)||0)-x.versato),0));
+    return {righe,na,tot};
+  },[posList,scritture]);
+
+  const sblocca=()=>{ invUnlockedUntil=Date.now()+INV_LOCK_MIN*60000; setAperto(true); setPin(''); setPin2(''); };
+  const blocca=()=>{ invUnlockedUntil=0; setAperto(false); setSicurezza(false); setDet(null); };
+
+  async function impostaPin(){
+    if(!/^\d{4,8}$/.test(pin)){ toast('Il PIN deve avere da 4 a 8 cifre','error'); return; }
+    if(pin!==pin2){ toast('I due PIN non coincidono','error'); return; }
+    try{
+      const salt=invB64u(invRnd(16)); const hash=await invHash(pin,salt);
+      await db.ref('investimenti/lock').update({salt,hash,aggiornato:new Date().toISOString()});
+      if(!pos || !Object.keys(pos).length){
+        const up={}; INV_DEFAULT.forEach((p,i)=>{ up['p'+Date.now().toString(36)+i]={...p,creato:todayISO()}; });
+        await db.ref('investimenti/posizioni').update(up);
+      }
+      toast('PIN impostato','success'); sblocca();
+    }catch(e){ toast('Salvataggio non riuscito: '+(e.message||e),'error'); }
+  }
+  async function provaPin(){
+    if(!lock||!lock.hash) return;
+    const h=await invHash(pin,lock.salt);
+    if(h===lock.hash) sblocca(); else { toast('PIN errato','error'); setPin(''); }
+  }
+  async function attivaBio(){
+    if(!invBioOk()){ toast('Face ID / Touch ID non disponibile su questo browser','error'); return; }
+    try{
+      setBusy(true);
+      const cred=await navigator.credentials.create({publicKey:{
+        challenge:invRnd(32), rp:{name:'Contabilità Personale', id:location.hostname},
+        user:{id:invRnd(16), name:(authUser&&authUser.email)||'utente', displayName:'Investimenti'},
+        pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
+        authenticatorSelection:{authenticatorAttachment:'platform', userVerification:'required', residentKey:'discouraged'},
+        timeout:60000, attestation:'none'}});
+      const id=invB64u(cred.rawId);
+      await db.ref('investimenti/lock/creds/'+invKey(id)).set({id, device:invDevice(), creato:new Date().toISOString()});
+      toast('Face ID / Touch ID attivato su questo dispositivo','success');
+    }catch(e){ if(!e||e.name!=='NotAllowedError') toast('Attivazione non riuscita: '+((e&&e.message)||e),'error'); }
+    finally{ setBusy(false); }
+  }
+  async function sbloccaBio(){
+    const creds=Object.values((lock&&lock.creds)||{}).filter(c=>c&&c.id);
+    if(!creds.length||!invBioOk()) return;
+    try{
+      setBusy(true);
+      const res=await navigator.credentials.get({publicKey:{challenge:invRnd(32), rpId:location.hostname, timeout:60000,
+        userVerification:'required', allowCredentials:creds.map(c=>({type:'public-key', id:invUnb64u(c.id), transports:['internal']}))}});
+      if(res) sblocca();
+    }catch(e){ if(!e||e.name!=='NotAllowedError') toast('Sblocco non riuscito: '+((e&&e.message)||e),'error'); }
+    finally{ setBusy(false); }
+  }
+  async function togliDispositivo(k){
+    if(!window.confirm('Togliere questo dispositivo dallo sblocco biometrico?')) return;
+    await db.ref('investimenti/lock/creds/'+k).remove(); toast('Dispositivo rimosso','success');
+  }
+  async function nuovo(){
+    const id='p'+Date.now().toString(36);
+    await db.ref('investimenti/posizioni/'+id).set({nome:'Nuovo investimento',tipo:'Fondo',conto:contiFin[0]?contiFin[0].codice:11,chiave:'',ordine:posList.length+1,creato:todayISO()});
+    setDet(id);
+  }
+
+  const pinInput = (val,set,ph,onEnter) => (
+    <input type="password" inputMode="numeric" autoComplete="off" maxLength={8} value={val} placeholder={ph}
+      onChange={e=>set(e.target.value.replace(/\D/g,''))} onKeyDown={e=>{ if(e.key==='Enter'&&onEnter) onEnter(); }}
+      style={{fontSize:20,letterSpacing:6,textAlign:'center',maxWidth:220}}/>
+  );
+
+  if(lock===undefined || pos===null) return <div><PageHead title="Investimenti" sub="Caricamento…"/></div>;
+
+  /* ---------- schermata di blocco ---------- */
+  if(!aperto){
+    const creds=Object.values((lock&&lock.creds)||{}).filter(c=>c&&c.id);
+    const configurato=!!(lock&&lock.hash);
+    return (
+      <div>
+        <PageHead title="Investimenti" sub="Sezione protetta"/>
+        <div className="card" style={{maxWidth:420,margin:'10px auto',textAlign:'center',padding:'26px 20px'}}>
+          <div style={{fontSize:34,marginBottom:6}}>🔒</div>
+          {!configurato ? <>
+            <div className="card-title" style={{textAlign:'center'}}>Imposta il PIN della sezione</div>
+            <p style={{fontSize:13,color:'var(--ink-2)',marginTop:0}}>Da 4 a 8 cifre. Dopo potrai attivare Face ID o Touch ID su ogni dispositivo.</p>
+            <div style={{display:'grid',gap:10,justifyItems:'center'}}>
+              {pinInput(pin,setPin,'PIN')}
+              {pinInput(pin2,setPin2,'Ripeti PIN',impostaPin)}
+              <button className="btn accent" onClick={impostaPin}>Imposta PIN</button>
+            </div>
+          </> : <>
+            <div className="card-title" style={{textAlign:'center'}}>Sblocca gli investimenti</div>
+            {creds.length>0 && invBioOk() && <div style={{margin:'6px 0 16px'}}>
+              <button className="btn accent" onClick={sbloccaBio} disabled={busy} style={{width:'100%',maxWidth:260}}>Sblocca con Face ID / Touch ID</button>
+              <div style={{fontSize:11.5,color:'var(--ink-3)',marginTop:8}}>oppure con il PIN</div>
+            </div>}
+            <div style={{display:'grid',gap:10,justifyItems:'center'}}>
+              {pinInput(pin,setPin,'PIN',provaPin)}
+              <button className={'btn '+(creds.length?'ghost':'accent')} onClick={provaPin} disabled={!pin}>Sblocca con PIN</button>
+            </div>
+          </>}
+        </div>
+      </div>
+    );
+  }
+
+  /* ---------- sezione sbloccata ---------- */
+  const {righe,na,tot}=calc;
+  const pesoBase=Math.max(0.01,righe.reduce((s,x)=>s+Math.max(0,x.valore),0)+na.reduce((s,x)=>s+Math.max(0,x.versato),0));
+  const creds=Object.entries((lock&&lock.creds)||{}).filter(([,c])=>c&&c.id);
+  const pe=righe.filter(x=>x.tipo==='Private equity');
+  const pct=x=>x==null?'':(x>0?'+':'')+x.toFixed(1).replace('.',',')+'%';
+  const detRow=det?righe.find(x=>x.id===det):null;
+
+  return (
+    <div>
+      <PageHead title="Investimenti" sub={`Versato dal libro giornale, valore di mercato inserito a mano · si riblocca dopo ${INV_LOCK_MIN} minuti di inattività`}>
+        <button className="btn ghost sm" onClick={()=>setSicurezza(x=>!x)}>⚙ Sicurezza</button>
+        <button className="btn ghost sm" onClick={blocca}>🔒 Blocca</button>
+        <button className="btn accent sm" onClick={nuovo}>+ Investimento</button>
+      </PageHead>
+
+      {sicurezza && <div className="card" style={{marginBottom:16}}>
+        <div className="card-title">Sicurezza della sezione</div>
+        <div style={{fontSize:13,marginBottom:10}}>
+          <b>Face ID / Touch ID</b> — {creds.length?`${creds.length} dispositiv${creds.length===1?'o attivo':'i attivi'}`:'nessun dispositivo attivo'}
+          {creds.map(([k,c])=>(
+            <div key={k} style={{display:'flex',alignItems:'center',gap:8,marginTop:6,fontSize:12.5}}>
+              <span>{c.device||'Dispositivo'} · attivato il {fmtDate((c.creato||'').slice(0,10))}</span>
+              <button className="btn ghost sm" onClick={()=>togliDispositivo(k)}>Togli</button>
+            </div>
+          ))}
+          <div style={{marginTop:10}}>
+            <button className="btn accent sm" onClick={attivaBio} disabled={busy||!invBioOk()}>Attiva su questo dispositivo ({invDevice()})</button>
+            {!invBioOk() && <span style={{fontSize:12,color:'var(--ink-3)',marginLeft:8}}>Non supportato da questo browser</span>}
+          </div>
+        </div>
+        <div style={{fontSize:13,borderTop:'1px solid var(--rule)',paddingTop:10}}>
+          <b>Cambia PIN</b>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:8,alignItems:'center'}}>
+            {pinInput(pin,setPin,'Nuovo PIN')}{pinInput(pin2,setPin2,'Ripeti',impostaPin)}
+            <button className="btn ghost sm" onClick={impostaPin}>Salva PIN</button>
+          </div>
+        </div>
+        <div style={{fontSize:11.5,color:'var(--ink-3)',marginTop:10,fontStyle:'italic'}}>
+          È un blocco di riservatezza: impedisce di vedere la sezione a chi usa l'app sul tuo telefono o computer.
+          I dati restano comunque protetti dal tuo accesso Firebase, come il resto della contabilità.
+        </div>
+      </div>}
+
+      <div className="kpi-grid">
+        <Kpi accent label="Valore attuale" value={eur(tot.valore)} hint="Ultimo valore inserito, altrimenti il versato"/>
+        <Kpi label="Totale versato" value={eur(tot.versato)} hint="Saldo dei conti titoli in contabilità"/>
+        <Kpi label="Plus / minus" value={eur(tot.pl)} neg={tot.pl<0} hint={tot.plPct==null?'':pct(tot.plPct)+' sul versato'}/>
+        {tot.impegno>0
+          ? <Kpi label="Private equity da richiamare" value={eur(tot.residuo)} hint={`Impegno totale ${eur(tot.impegno)}`}/>
+          : <Kpi label="Investimenti" value={String(righe.length)} hint="Tocca una scheda per il dettaglio"/>}
+      </div>
+
+      <div className="liq-grid" style={{marginBottom:22}}>
+        {righe.map(x=>{
+          const peso=Math.max(0,x.valore)/pesoBase*100;
+          return (
+            <div className="liq-card" key={x.id} onClick={()=>setDet(x.id)} style={{cursor:'pointer'}} title="Apri il dettaglio">
+              <div className="head"><span className="name">{x.nome}</span><span style={{fontSize:11,color:'var(--ink-3)'}}>{x.tipo}</span></div>
+              <div className={'saldo'+(x.valore<0?' neg':'')}>{eur(x.valore)}</div>
+              <div className="delta">
+                versato {eur(x.versato)}
+                {x.pl!=null && <> · <span className={x.pl<0?'neg':'pos'}>{x.pl>0?'+':''}{num2(x.pl)} € ({pct(x.plPct)})</span></>}
+                {x.ult && <div style={{fontSize:11,color:'var(--ink-3)',marginTop:2}}>valore al {fmtDate(x.ult.data)}</div>}
+                {!x.ult && <div style={{fontSize:11,color:'var(--ink-3)',marginTop:2}}>nessun valore di mercato inserito</div>}
+              </div>
+              <div style={{height:5,background:'var(--rule)',borderRadius:3,marginTop:8,overflow:'hidden'}}>
+                <div style={{width:peso.toFixed(1)+'%',height:'100%',background:'var(--accent)'}}></div>
+              </div>
+              <div style={{fontSize:10.5,color:'var(--ink-3)',marginTop:3}}>{peso.toFixed(1).replace('.',',')}% del portafoglio</div>
+            </div>
+          );
+        })}
+        {na.map(x=>(
+          <div className="liq-card" key={'na'+x.conto} style={{opacity:.8}}>
+            <div className="head"><span className="name">{contoByCode[x.conto]?.nome||('#'+x.conto)}</span><span style={{fontSize:11,color:'var(--ink-3)'}}>non attribuito</span></div>
+            <div className="saldo">{eur(x.versato)}</div>
+            <div className="delta">Movimenti del conto non collegati a nessun investimento: crea un investimento su questo conto.</div>
+          </div>
+        ))}
+      </div>
+
+      {pe.length>0 && <div className="card" style={{marginBottom:18}}>
+        <div className="card-title">Private equity · richiami di capitale</div>
+        {pe.map(x=>{
+          const imp=Number(x.impegno)||0; const q=imp>0?Math.min(100,x.versato/imp*100):0;
+          return (
+            <div key={x.id} style={{marginBottom:12,fontSize:13}}>
+              <div style={{display:'flex',justifyContent:'space-between',gap:8,flexWrap:'wrap'}}>
+                <b>{x.nome}</b>
+                <span>richiamato <b>{eur(x.versato)}</b>{imp>0?<> su {eur(imp)} · da richiamare <b>{eur(Math.max(0,imp-x.versato))}</b></>:' · impegno non inserito'}</span>
+              </div>
+              {imp>0 && <div style={{height:7,background:'var(--rule)',borderRadius:4,marginTop:6,overflow:'hidden'}}><div style={{width:q.toFixed(1)+'%',height:'100%',background:'var(--accent)'}}></div></div>}
+              {(x.prossimoData||x.prossimoImporto) && <div style={{fontSize:12,color:'var(--ink-2)',marginTop:5}}>Prossimo richiamo: <b>{x.prossimoImporto?eur(Number(x.prossimoImporto)):'importo da definire'}</b>{x.prossimoData?' il '+fmtDate(x.prossimoData):' · data da definire'}</div>}
+            </div>
+          );
+        })}
+        <div style={{fontSize:11.5,color:'var(--ink-3)'}}>Impegno e prossimo richiamo si impostano dal dettaglio dell'investimento.</div>
+      </div>}
+
+      {detRow && <InvDettaglio x={detRow} contiFin={contiFin} onClose={()=>setDet(null)} toast={toast}/>}
+    </div>
+  );
+}
+
+function InvDettaglio({x, contiFin, onClose, toast}){
+  const [f,setF]=useState({nome:x.nome||'',tipo:x.tipo||'Altro',conto:String(x.conto||''),chiave:x.chiave||'',impegno:x.impegno??'',
+    prossimoData:x.prossimoData||'',prossimoImporto:x.prossimoImporto??'',note:x.note||''});
+  const [nv,setNv]=useState({data:todayISO(),valore:''});
+  const ref=db.ref('investimenti/posizioni/'+x.id);
+  const set=(k,v)=>setF(o=>({...o,[k]:v}));
+  async function salva(){
+    const n=parseFloat(String(f.impegno).replace(',','.')), pi=parseFloat(String(f.prossimoImporto).replace(',','.'));
+    await ref.update({nome:(f.nome||'').trim()||'Investimento',tipo:f.tipo,conto:parseInt(f.conto)||null,chiave:(f.chiave||'').trim(),
+      impegno:isNaN(n)?null:n, prossimoData:f.prossimoData||null, prossimoImporto:isNaN(pi)?null:pi, note:f.note||''});
+    toast('Investimento salvato','success');
+  }
+  async function aggiungiValore(){
+    const v=parseFloat(String(nv.valore).replace(/\./g,'').replace(',','.'));
+    if(!nv.data||isNaN(v)){ toast('Inserisci data e valore','error'); return; }
+    await ref.child('valori/v'+Date.now().toString(36)).set({data:nv.data,valore:v});
+    setNv({data:todayISO(),valore:''}); toast('Valore registrato','success');
+  }
+  async function togliValore(vid){ await ref.child('valori/'+vid).remove(); }
+  async function elimina(){
+    if(!window.confirm(`Eliminare "${x.nome}"? I movimenti in contabilità restano, cambia solo la vista degli investimenti.`)) return;
+    await ref.remove(); onClose();
+  }
+  const lbl={display:'block',fontSize:12,fontWeight:600,color:'var(--ink-2)',marginBottom:4};
+  return (
+    <div className="modal-bg" onClick={e=>{if(e.target.className==='modal-bg')onClose();}}>
+      <div className="modal" style={{maxWidth:640}}>
+        <div className="modal-head"><h3>{x.nome}</h3><button className="btn ghost sm" onClick={onClose}>✕</button></div>
+        <div className="modal-body" style={{paddingTop:0}}>
+          <div style={{display:'flex',gap:14,flexWrap:'wrap',fontSize:13,margin:'4px 0 14px'}}>
+            <span>Versato <b>{eur(x.versato)}</b></span>
+            <span>Valore <b>{eur(x.valore)}</b></span>
+            {x.pl!=null && <span>Plus/minus <b className={x.pl<0?'neg':'pos'}>{x.pl>0?'+':''}{num2(x.pl)} €</b></span>}
+          </div>
+
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))',gap:10}}>
+            <div><label style={lbl}>Nome</label><input type="text" value={f.nome} onChange={e=>set('nome',e.target.value)}/></div>
+            <div><label style={lbl}>Tipo</label><select value={f.tipo} onChange={e=>set('tipo',e.target.value)}>{INV_TIPI.map(t=><option key={t}>{t}</option>)}</select></div>
+            <div><label style={lbl}>Conto in contabilità</label><select value={f.conto} onChange={e=>set('conto',e.target.value)}>{contiFin.map(c=><option key={c.codice} value={c.codice}>{c.codice} · {c.nome}</option>)}</select></div>
+            <div><label style={lbl} title="Parole nella descrizione delle scritture, separate da |. Vuoto = prende tutto il resto del conto">Parola chiave</label>
+              <input type="text" value={f.chiave} onChange={e=>set('chiave',e.target.value)} placeholder="es. ARCA TE (vuoto = resto del conto)"/></div>
+            {f.tipo==='Private equity' && <>
+              <div><label style={lbl}>Impegno totale €</label><input type="text" inputMode="decimal" value={f.impegno} onChange={e=>set('impegno',e.target.value)} placeholder="0,00"/></div>
+              <div><label style={lbl}>Prossimo richiamo · data</label><input type="date" value={f.prossimoData} onChange={e=>set('prossimoData',e.target.value)}/></div>
+              <div><label style={lbl}>Prossimo richiamo · importo €</label><input type="text" inputMode="decimal" value={f.prossimoImporto} onChange={e=>set('prossimoImporto',e.target.value)} placeholder="0,00"/></div>
+            </>}
+          </div>
+          <div style={{marginTop:10}}><label style={lbl}>Note</label><input type="text" value={f.note} onChange={e=>set('note',e.target.value)} placeholder="ISIN, piattaforma, scadenze…"/></div>
+          <div style={{display:'flex',gap:8,marginTop:12}}>
+            <button className="btn accent" onClick={salva}>Salva</button>
+            <div style={{flex:1}}></div>
+            <button className="btn danger sm" onClick={elimina}>Elimina</button>
+          </div>
+
+          <div className="card-title" style={{marginTop:20}}>Valore di mercato</div>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'flex-end',marginBottom:8}}>
+            <div><label style={lbl}>Data</label><input type="date" value={nv.data} onChange={e=>setNv(o=>({...o,data:e.target.value}))}/></div>
+            <div><label style={lbl}>Valore €</label><input type="text" inputMode="decimal" value={nv.valore} onChange={e=>setNv(o=>({...o,valore:e.target.value}))} placeholder="0,00" onKeyDown={e=>{if(e.key==='Enter')aggiungiValore();}}/></div>
+            <button className="btn ghost" onClick={aggiungiValore}>+ Aggiungi</button>
+          </div>
+          <div className="tbl-wrap"><table className="tbl">
+            <thead><tr><th>Data</th><th className="num">Valore</th><th className="num">vs versato</th><th></th></tr></thead>
+            <tbody>
+              {x.vals.length===0 && <tr><td colSpan="4" className="empty-state">Nessun valore: finché non lo inserisci si usa il versato</td></tr>}
+              {[...x.vals].reverse().map(v=>(
+                <tr key={v.vid}><td>{fmtDate(v.data)}</td><td className="num">{num2(v.valore)}</td>
+                  <td className={'num '+((v.valore-x.versato)<0?'neg':'pos')}>{num2(r2(v.valore-x.versato))}</td>
+                  <td style={{textAlign:'right'}}><button className="btn ghost sm" onClick={()=>togliValore(v.vid)}>✕</button></td></tr>
+              ))}
+            </tbody>
+          </table></div>
+
+          <div className="card-title" style={{marginTop:20}}>Movimenti in contabilità</div>
+          <div className="tbl-wrap"><table className="tbl">
+            <thead><tr><th>Data</th><th>Descrizione</th><th className="num">Importo</th></tr></thead>
+            <tbody>
+              {x.mov.length===0 && <tr><td colSpan="3" className="empty-state">Nessun movimento collegato</td></tr>}
+              {x.mov.map((m,i)=>(<tr key={i}><td style={{whiteSpace:'nowrap'}}>{fmtDate(m.data)}</td><td>{m.descr}</td><td className={'num '+(m.imp<0?'neg':'')}>{num2(m.imp)}</td></tr>))}
+            </tbody>
+          </table></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const NAV = [
   {sec:'Panoramica',items:[
     {id:'dashboard',ico:'◫',label:'Dashboard'},
@@ -9447,6 +9832,9 @@ const NAV = [
     {id:'rendiconto',ico:'~',label:'Rendiconto Finanz.'},
     {id:'controller',ico:'◎',label:'Controller'},
     {id:'budget',ico:'◑',label:'Budget'},
+  ]},
+  {sec:'Patrimonio',items:[
+    {id:'investimenti',ico:'◆',label:'Investimenti 🔒'},
   ]},
   {sec:'Analisi',items:[
     {id:'analisi',ico:'◧',label:'Dashboard personalizzate'},
@@ -9682,6 +10070,7 @@ function App({authUser, onLogout}){
           {page==='schema' && <PageSchemaBilancio scritture={scritture} conti={conti} categorie={categorie} toast={showToast}/>}
           {page==='rendiconto' && <PageRendiconto scritture={scritture} categorie={categorie} updateScritture={updateScritture} toast={showToast}/>}
           {page==='controller' && <PageController scritture={scritture} categorie={categorie} budget={budget} setBudget={setBudget}/>}
+          {page==='investimenti' && <PageInvestimenti scritture={scritture} authUser={authUser} toast={showToast}/>}
           {page==='budget' && <PageBudget scritture={scritture} budgets={budgets} setBudgets={setBudgets} toast={showToast}/>}
           {page==='liquidita' && <PageLiquidita saldi={saldi} scritture={scritture} conti={conti} setConti={setConti} saldiIni={saldiIni} setSaldiIni={setSaldiIni} toast={showToast}/>}
           {page==='pianoconti' && <PagePianoConti saldi={saldi} conti={conti} setConti={setConti} toast={showToast}/>}
