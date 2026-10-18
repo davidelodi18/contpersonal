@@ -9487,15 +9487,23 @@ function invDates(movs, vals){
   vals.forEach(v=>{ if(v.data<=oggi) ds.add(v.data); });
   return [...ds].sort();
 }
-/* per ogni data: versato cumulato e valore (ultimo valore inserito + versamenti successivi, altrimenti il versato) */
+/* per ogni data: versato cumulato e valore di mercato.
+   - Versato: storico contabile; l'allineamento al costo di carico (movimenti adj) vale
+     dall'inizio della serie, non dalla sua data: la differenza fra costo da estratto e
+     storico contabile risale a versamenti passati, quindi la linea si sposta in blocco
+     invece di fare un gradino nel mese in cui è stato inserito il costo di carico.
+   - Valore: esiste solo da quando c'è un valore inserito/prezzo. Prima è null (il grafico
+     non lo disegna), così la plusvalenza maturata negli anni non sembra un guadagno del mese.
+     I prodotti senza alcun valore usano il versato. */
 function invSerie(movs, vals, dates, cut){
   const mv=[...movs].sort((a,b)=>(a.data||'').localeCompare(b.data||''));
   const vv=[...vals].sort((a,b)=>a.data.localeCompare(b.data));
   return dates.map(d=>{
-    const vers=r2(mv.filter(m=>m.data<=d).reduce((s,m)=>s+m.imp,0));
+    const vers=r2(mv.filter(m=>m.adj||m.data<=d).reduce((s,m)=>s+m.imp,0));
     const lv=vv.filter(v=>v.data<=d).pop();
     // dopo l'ultimo valore inserito si aggiungono solo i versamenti veri successivi (non l'allineamento al costo di carico)
-    const val=lv ? r2((Number(lv.valore)||0)+mv.filter(m=>!m.adj&&m.data>lv.data&&(!cut||m.data>cut)&&m.data<=d).reduce((s,m)=>s+m.imp,0)) : vers;
+    const val=lv ? r2((Number(lv.valore)||0)+mv.filter(m=>!m.adj&&m.data>lv.data&&(!cut||m.data>cut)&&m.data<=d).reduce((s,m)=>s+m.imp,0))
+                 : (vv.length ? null : vers);
     return {d,vers,val};
   });
 }
@@ -9513,12 +9521,12 @@ function InvChart({config, height}){
 const invEurTick = v => new Intl.NumberFormat('it-IT',{maximumFractionDigits:0}).format(v)+' €';
 function invLineConfig(serie, mostraVersato){
   return {type:'line', data:{labels:serie.map(p=>invLbl(p.d)), datasets:[
-      {label:'Valore', data:serie.map(p=>p.val), borderColor:'#1f4f8f', backgroundColor:'rgba(31,79,143,.10)', fill:true, tension:.25, pointRadius:2, borderWidth:2},
+      {label:'Valore di mercato', data:serie.map(p=>p.val), borderColor:'#1f4f8f', backgroundColor:'rgba(31,79,143,.10)', fill:true, tension:.25, pointRadius:2, borderWidth:2, spanGaps:false},
       ...(mostraVersato?[{label:'Versato', data:serie.map(p=>p.vers), borderColor:'#9aa3b5', borderDash:[5,4], fill:false, tension:0, pointRadius:0, borderWidth:1.5, stepped:true}]:[])
     ]},
     options:{responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
       plugins:{legend:{display:true,position:'bottom',labels:{boxWidth:10,font:{size:11}}},
-        tooltip:{callbacks:{label:c=>c.dataset.label+': '+eur(c.parsed.y)}}},
+        tooltip:{filter:c=>c.parsed.y!=null, callbacks:{label:c=>c.dataset.label+': '+eur(c.parsed.y)}}},
       scales:{y:{ticks:{callback:invEurTick,font:{size:10}},grid:{color:'#eef2f8'}}, x:{ticks:{font:{size:10},maxRotation:0,autoSkip:true},grid:{display:false}}}}};
 }
 
@@ -9598,10 +9606,12 @@ function PageInvestimenti({scritture, authUser, toast}){
     const na=Object.entries(nonAttr).map(([c,x])=>({conto:Number(c),gruppo:invGruppo({conto:Number(c)}),...x}));
     // serie per i grafici
     const adjCut={}; righe.forEach(x=>{ if(x.adjD){ const c=Number(x.conto); if(!adjCut[c]||x.adjD<adjCut[c]) adjCut[c]=x.adjD; } });
-    const inclList=Object.entries(incl).map(([c,mm])=>({conto:Number(c),mov:[...mm.filter(m=>m.data<(adjCut[c]||cutoff[c])),{data:adjCut[c]||cutoff[c],imp:-r2(mm.filter(m=>m.data<(adjCut[c]||cutoff[c])).reduce((t,m)=>t+m.imp,0))}]}));
+    const inclList=Object.entries(incl).map(([c,mm])=>({conto:Number(c),mov:[...mm.filter(m=>m.data<(adjCut[c]||cutoff[c])),{data:adjCut[c]||cutoff[c],adj:true,imp:-r2(mm.filter(m=>m.data<(adjCut[c]||cutoff[c])).reduce((t,m)=>t+m.imp,0))}]}));
     const dates=invDates([...righe.flatMap(x=>x.movSerie),...na.flatMap(x=>x.mov),...inclList.flatMap(x=>x.mov)], righe.flatMap(x=>x.vals));
     const serieTot=dates.map(d=>({d,vers:0,val:0}));
-    const somma=arr=>arr.forEach((p,i)=>{ serieTot[i].vers=r2(serieTot[i].vers+p.vers); serieTot[i].val=r2(serieTot[i].val+p.val); });
+    // il valore totale esiste solo nelle date in cui ogni prodotto con prezzi ha già un valore
+    const somma=arr=>arr.forEach((p,i)=>{ serieTot[i].vers=r2(serieTot[i].vers+p.vers);
+      serieTot[i].val=(serieTot[i].val===null||p.val===null)?null:r2(serieTot[i].val+p.val); });
     righe.forEach(x=>{ x.serie=invSerie(x.movSerie,x.vals,dates,x.conCosto?x.dataCosto:null); somma(x.serie); });
     na.forEach(x=>somma(invSerie(x.mov,[],dates)));
     inclList.forEach(x=>somma(invSerie(x.mov,[],dates)));
@@ -9807,7 +9817,7 @@ function PageInvestimenti({scritture, authUser, toast}){
         <div className="card" style={{marginBottom:0}}>
           <div className="card-title">Andamento del portafoglio</div>
           <InvChart config={invLineConfig(serieTot,true)} height={240}/>
-          <div style={{fontSize:11,color:'var(--ink-3)',marginTop:6}}>Linea piena: valore (ultimo valore inserito per ogni titolo, altrimenti il versato). Tratteggio: soldi versati.</div>
+          <div style={{fontSize:11,color:'var(--ink-3)',marginTop:6}}>Linea piena: valore di mercato, da quando ci sono i prezzi (prima non è noto e non viene disegnato). Tratteggio: soldi versati, già allineati al costo di carico da estratto. La distanza fra le due linee è la plus/minusvalenza latente.</div>
         </div>
         <div className="card" style={{marginBottom:0}}>
           <div className="card-title">Composizione</div>
