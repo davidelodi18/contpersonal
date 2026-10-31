@@ -9459,7 +9459,7 @@ const invKey = id => String(id).replace(/[.#$\[\]\/]/g,'_');
 const INV_GRUPPI = ['Fondi BPER','Fondi Azimut','Altri'];
 /* prezzi automatici: pagina del fondo su Borsa Italiana letta tramite il proxy Cloudflare (gratuito) */
 const INV_PROXY = 'https://rassegna-proxy.davide-lodi18.workers.dev/?url=';
-let invPrezziFatti = '';        // giorno dell'ultimo aggiornamento automatico in questa sessione
+let invPrezziTs = 0;            // ultimo tentativo automatico in questa sessione (ms)
 const invNum = s => parseFloat(String(s).replace(/\./g,'').replace(',','.'));
 async function invPrezzoBI(codice){
   const url='https://www.borsaitaliana.it/borsa/fondi/dettaglio/'+encodeURIComponent(codice)+'.html?lang=it';
@@ -9643,8 +9643,18 @@ function PageInvestimenti({scritture, authUser, toast}){
   async function aggiornaPrezzi(forza){
     const lista=calc.righe.filter(x=>x.codiceBI && Number(x.quote)>0);
     if(!lista.length){ if(forza) toast('Nessun investimento con codice Borsa Italiana e quote','error'); return; }
-    if(!forza && invPrezziFatti===todayISO()) return;
-    invPrezziFatti=todayISO(); setPrezziStato('Aggiornamento prezzi…');
+    // automatico: riprova se i prezzi sono stati letti da più di 2 ore (da qualsiasi dispositivo).
+    // Prima bastava un tentativo al giorno: se avveniva prima che Borsa Italiana pubblicasse
+    // la quota nuova (esce con 1-2 giorni di ritardo), restava fermo al prezzo vecchio.
+    if(!forza){
+      const letti=lista.map(x=>Date.parse((x.ultimoPrezzo&&x.ultimoPrezzo.letto)||'')||0);
+      if(Date.now()-Math.min(...letti) < 2*3600e3 || Date.now()-invPrezziTs < 10*60e3){
+        const u=lista.map(x=>x.ultimoPrezzo&&x.ultimoPrezzo.data).filter(Boolean).sort();
+        if(u.length) setPrezziStato('Prezzi Borsa Italiana al '+fmtDate(u[0])+' · letti '+new Date(Math.max(...letti)).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}));
+        return;
+      }
+    }
+    invPrezziTs=Date.now(); setPrezziStato('Aggiornamento prezzi…');
     const up={}; const ok=[], ko=[];
     for(const x of lista){
       try{
@@ -9658,9 +9668,17 @@ function PageInvestimenti({scritture, authUser, toast}){
     }
     if(Object.keys(up).length) await db.ref().update(up);
     setPrezziStato((ok.length?'Prezzi Borsa Italiana: '+ok.join(' · '):'')+(ko.length?(ok.length?' — ':'')+'non riuscito: '+ko.join(', '):''));
-    if(forza) toast(ok.length?'Prezzi aggiornati':'Aggiornamento non riuscito', ok.length?'success':'error');
+    if(forza || !ok.length) toast(ok.length?'Prezzi aggiornati':'Aggiornamento prezzi non riuscito', ok.length?'success':'error');
   }
+  const aggRef=useRef(null); aggRef.current=aggiornaPrezzi;
   useEffect(()=>{ if(aperto && pos) aggiornaPrezzi(false); },[aperto, !!pos]);
+  // l'app sulla home del telefono resta aperta in memoria: ricontrolla quando torna in primo piano
+  useEffect(()=>{
+    if(!aperto) return;
+    const f=()=>{ if(document.visibilityState==='visible' && aggRef.current) aggRef.current(false); };
+    document.addEventListener('visibilitychange',f);
+    return ()=>document.removeEventListener('visibilitychange',f);
+  },[aperto]);
   const sblocca=()=>{ invUnlockedUntil=Date.now()+INV_LOCK_MIN*60000; setAperto(true); setPin(''); setPin2(''); };
   const blocca=()=>{ invUnlockedUntil=0; setAperto(false); setSicurezza(false); setDet(null); };
 
